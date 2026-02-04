@@ -53,23 +53,56 @@ export async function generateImage(
   originalUrl: string,
   options?: {
     prompt?: string;
+    file?: File;
   },
   onProgress?: (progress: number) => void
 ): Promise<string> {
-  // Simulate multi-step generation process
+  if (import.meta.env.PROD) {
+    onProgress?.(0.1);
+
+    const file = options?.file;
+    if (file) {
+      const form = new FormData();
+      form.set('image', file);
+      if (options?.prompt) form.set('prompt', options.prompt);
+
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        body: form,
+      });
+      if (!response.ok) {
+        throw new Error('generation-failed');
+      }
+
+      const blob = await response.blob();
+      onProgress?.(1);
+      return URL.createObjectURL(blob);
+    }
+
+    const response = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ imageUrl: originalUrl, prompt: options?.prompt }),
+    });
+    if (!response.ok) {
+      throw new Error('generation-failed');
+    }
+
+    const blob = await response.blob();
+    onProgress?.(1);
+    return URL.createObjectURL(blob);
+  }
+
   const steps = 10;
   for (let i = 0; i <= steps; i++) {
     await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500));
     onProgress?.(i / steps);
   }
 
-  // Simulate occasional failures
   if (Math.random() < 0.03) {
     throw new Error('generation-failed');
   }
 
-  // In a real app, this would return the AI-generated image URL
-  // For now, return the original image (in production, this would be the generated result)
   return originalUrl;
 }
 

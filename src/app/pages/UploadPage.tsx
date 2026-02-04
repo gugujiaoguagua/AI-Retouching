@@ -20,6 +20,7 @@ export function UploadPage() {
   );
   const [prompt, setPrompt] = useState(initialPrompt);
   const [localObjectUrl, setLocalObjectUrl] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   useEffect(() => {
     return () => {
@@ -53,6 +54,7 @@ export function UploadPage() {
 
     const url = URL.createObjectURL(file);
     setLocalObjectUrl(url);
+    setSelectedFile(file);
     setImage({
       id: `upload-${Date.now()}`,
       url,
@@ -70,8 +72,13 @@ export function UploadPage() {
       return;
     }
 
+    if (!selectedFile) {
+      toast.error('请先上传一张图片');
+      return;
+    }
+
     storageService.addRecentImage(image);
-    navigate('/generating', { state: { image, prompt: trimmedPrompt } });
+    navigate('/generating', { state: { image, prompt: trimmedPrompt, file: selectedFile } });
   };
 
   return (

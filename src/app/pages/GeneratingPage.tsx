@@ -23,6 +23,7 @@ export function GeneratingPage() {
   const location = useLocation();
   const image = location.state?.image as ImageData | undefined;
   const prompt = location.state?.prompt as string | undefined;
+  const file = location.state?.file as File | undefined;
 
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState('准备中...');
@@ -57,7 +58,7 @@ export function GeneratingPage() {
 
       const generatedUrl = await generateImage(
         image.url,
-        { prompt },
+        { prompt, file },
         (genProgress) => {
           if (cancelledRef.current) return;
           setProgress(10 + genProgress * 80); // 10% to 90%
