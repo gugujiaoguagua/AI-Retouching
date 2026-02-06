@@ -6,12 +6,14 @@ import {
   extractTaskId,
   extractUploadRef,
   getEnv,
+  hasRhQuery,
   json,
   readImageNodeMappings,
   safeUrlForLog,
   toCallApiNodeInfoList,
   toOpenApiNodeInfoList,
 } from './_shared';
+
 
 export async function onRequestPost(context: { request: Request; env: Record<string, string | undefined> }) {
   try {
@@ -80,17 +82,33 @@ export async function onRequestPost(context: { request: Request; env: Record<str
 
     const authHeaders = buildAuthHeaders(apiKey);
 
+    const uploadFieldFromEnv = (context.env['RUNNINGHUB_UPLOAD_FIELD'] ?? '').trim();
+    const uploadField = uploadFieldFromEnv
+      ? uploadFieldFromEnv
+      : safeUrlForLog(uploadUrl).includes('/upload/image')
+        ? 'image'
+        : 'file';
+
+    const uploadUseBearerRaw = (context.env['RUNNINGHUB_UPLOAD_USE_BEARER'] ?? '').trim().toLowerCase();
+    const uploadUseBearer =
+      uploadUseBearerRaw === 'true'
+        ? true
+        : uploadUseBearerRaw === 'false'
+          ? false
+          : !hasRhQuery(uploadUrl);
+
     // 1) Upload files first (B-mode)
     const uploadedRefs: Array<{ fileKey?: string; fileValue?: string }> = [];
     for (const f of files.slice(0, imageMappings.length)) {
       const upForm = new FormData();
-      upForm.set('file', f, f.name);
+      upForm.set(uploadField, f, f.name);
 
       const upstream = await fetch(uploadUrl, {
         method: 'POST',
-        headers: authHeaders,
+        headers: uploadUseBearer ? authHeaders : undefined,
         body: upForm,
       });
+
 
       if (!upstream.ok) {
         console.warn(`[runninghub] upload failed status=${upstream.status} url=${safeUrlForLog(uploadUrl)}`);

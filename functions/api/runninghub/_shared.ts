@@ -43,6 +43,28 @@ export function safeUrlForLog(input: string): string {
   }
 }
 
+export function safeHostPath(input: string): { host: string | null; path: string | null } {
+  try {
+    const u = new URL(input);
+    return { host: u.host, path: u.pathname };
+  } catch {
+    return { host: null, path: null };
+  }
+}
+
+export function hasRhQuery(input: string): boolean {
+  try {
+    const u = new URL(input);
+    for (const k of u.searchParams.keys()) {
+      if (/^Rh-/i.test(k)) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+
 export function buildAuthHeaders(apiKey: string): Headers {
   const h = new Headers();
   const trimmed = apiKey.trim();
@@ -161,8 +183,13 @@ export function buildQueryCandidates(env: RunningHubEnv): string[] {
         'api.runninghub.com',
       ];
 
-
+  // “完美案例”跑通的 query 入口是 /openapi/v2/query
+  // 这里保持多候选，避免不同网关版本差异。
   const paths = [
+    '/openapi/v2/query',
+    '/openapi/v2/query/task',
+
+    // legacy / compat
     '/openapi_v2/query/task',
     '/openapi_v2/task/query',
     '/openapi_v2/tasks/query',
@@ -178,6 +205,7 @@ export function buildQueryCandidates(env: RunningHubEnv): string[] {
   }
   return urls;
 }
+
 
 export function extractTaskId(payload: any): string | undefined {
   const candidates = [
