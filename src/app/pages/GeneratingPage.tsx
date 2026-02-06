@@ -24,6 +24,8 @@ export function GeneratingPage() {
   const image = location.state?.image as ImageData | undefined;
   const prompt = location.state?.prompt as string | undefined;
   const file = location.state?.file as File | undefined;
+  const batchImageFiles = location.state?.batchImageFiles as File[] | undefined;
+
 
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState('准备中...');
@@ -50,20 +52,36 @@ export function GeneratingPage() {
   const startGeneration = async () => {
     if (!image) return;
 
+    const files = Array.isArray(batchImageFiles) && batchImageFiles.length ? batchImageFiles : file ? [file] : [];
+    if (import.meta.env.PROD) {
+      // 当前 RunningHub 工作流为 B 模式：必须 upload 文件引用，且此页面约定 3 张图
+      if (files.length < 3) {
+        toast.error('请从相册选择 3 张图片后再生成');
+        navigate('/upload', { state: { prompt }, replace: true });
+        return;
+      }
+    }
+
     try {
       // Step 1: Generating
       setCurrentStep('生成中...');
       setProgress(10);
       const generationStartedAt = Date.now();
 
+
       const generatedUrl = await generateImage(
         image.url,
-        { prompt, file },
+        {
+          prompt,
+          file,
+          files: Array.isArray(batchImageFiles) && batchImageFiles.length ? batchImageFiles : file ? [file] : [],
+        },
         (genProgress) => {
           if (cancelledRef.current) return;
           setProgress(10 + genProgress * 80); // 10% to 90%
         }
       );
+
 
       if (cancelledRef.current) return;
 
@@ -101,9 +119,10 @@ export function GeneratingPage() {
 
       const parsedError = parseError(error);
       navigate('/error', {
-        state: { error: parsedError, image, prompt },
+        state: { error: parsedError, image, prompt, batchImageFiles },
         replace: true
       });
+
     }
   };
 

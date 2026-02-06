@@ -54,44 +54,87 @@ export async function generateImage(
   options?: {
     prompt?: string;
     file?: File;
+    files?: File[];
   },
   onProgress?: (progress: number) => void
 ): Promise<string> {
   if (import.meta.env.PROD) {
-    onProgress?.(0.1);
+    const prompt = options?.prompt?.trim() ?? '';
+    const files = (options?.files?.filter(Boolean) ?? []) as File[];
 
-    const file = options?.file;
-    if (file) {
-      const form = new FormData();
-      form.set('image', file);
-      if (options?.prompt) form.set('prompt', options.prompt);
-
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        body: form,
-      });
-      if (!response.ok) {
-        throw new Error('generation-failed');
-      }
-
-      const blob = await response.blob();
-      onProgress?.(1);
-      return URL.createObjectURL(blob);
+    // B 模式：必须先上传文件再 run（前端只把 File 交给同域 Functions）
+    if (!files.length) {
+      throw new Error('missing-file');
     }
 
-    const response = await fetch('/api/generate', {
+    onProgress?.(0.05);
+
+    // 1) run
+    const runForm = new FormData();
+    for (const f of files) {
+      runForm.append('file', f, f.name);
+    }
+    if (prompt) runForm.set('prompt', prompt);
+
+    const runResp = await fetch('/api/runninghub/run', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ imageUrl: originalUrl, prompt: options?.prompt }),
+      body: runForm,
     });
-    if (!response.ok) {
+
+    if (!runResp.ok) {
       throw new Error('generation-failed');
     }
 
-    const blob = await response.blob();
-    onProgress?.(1);
-    return URL.createObjectURL(blob);
+    const runJson = (await runResp.json().catch(() => null)) as null | { taskId?: string };
+    const taskId = typeof runJson?.taskId === 'string' ? runJson.taskId : '';
+    if (!taskId) {
+      throw new Error('generation-failed');
+    }
+
+    onProgress?.(0.15);
+
+    // 2) poll query
+    const startedAt = Date.now();
+    const timeoutMs = 3 * 60 * 1000;
+    const intervalMs = 1200;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const queryResp = await fetch('/api/runninghub/query', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ taskId }),
+      });
+
+      if (!queryResp.ok) {
+        throw new Error('generation-failed');
+      }
+
+      const queryJson = (await queryResp.json().catch(() => null)) as null | {
+        status?: string;
+        results?: Array<{ url?: string }>;
+      };
+
+      const status = (queryJson?.status ?? '').toUpperCase();
+      if (status === 'SUCCESS' || status === 'SUCCEEDED' || status === 'DONE' || status === 'COMPLETED') {
+        const url = queryJson?.results?.[0]?.url;
+        onProgress?.(1);
+        return typeof url === 'string' && url ? url : `/api/runninghub/image?taskId=${encodeURIComponent(taskId)}&index=0`;
+      }
+
+      if (status === 'FAILED' || status === 'FAIL' || status === 'ERROR' || status === 'CANCELED' || status === 'CANCELLED') {
+        throw new Error('generation-failed');
+      }
+
+      const elapsed = Date.now() - startedAt;
+      const p = Math.min(0.95, 0.15 + (elapsed / timeoutMs) * 0.8);
+      onProgress?.(p);
+
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+    }
+
+    throw new Error('timeout');
   }
+
 
   const steps = 10;
   for (let i = 0; i <= steps; i++) {
@@ -118,6 +161,14 @@ export function parseError(error: unknown): GenerationError {
     };
   }
 
+  if (errorMessage.includes('missing-file')) {
+    return {
+      type: 'format',
+      message: '缺少上传图片',
+      action: '请从相册选择 3 张图片后再生成'
+    };
+  }
+
   if (errorMessage.includes('format') || errorMessage.includes('unsupported')) {
     return {
       type: 'format',
@@ -125,6 +176,7 @@ export function parseError(error: unknown): GenerationError {
       action: '请选择 JPG、PNG 或 WebP 格式的图片'
     };
   }
+
 
   if (errorMessage.includes('compliance')) {
     return {

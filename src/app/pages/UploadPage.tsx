@@ -8,63 +8,106 @@ import { storageService } from '@/app/services/storage';
 import type { ImageData } from '@/app/types';
 import { toast } from 'sonner';
 
+type PickedImage = {
+  file: File | null;
+  objectUrl: string | null;
+};
+
+function validateImageFile(file: File) {
+  if (!file.type.startsWith('image/')) {
+    toast.error('请选择图片文件');
+    return false;
+  }
+
+  if (file.size > 10 * 1024 * 1024) {
+    toast.error('图片大小不能超过 10MB');
+    return false;
+  }
+
+  return true;
+}
+
 export function UploadPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const initialImage = location.state?.image as ImageData | undefined;
   const initialPrompt = (location.state?.prompt as string | undefined) ?? '';
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const baseInputRef = useRef<HTMLInputElement>(null);
+  const image1InputRef = useRef<HTMLInputElement>(null);
+  const image2InputRef = useRef<HTMLInputElement>(null);
+
   const [image, setImage] = useState<ImageData | undefined>(
     initialImage?.source === 'example' ? undefined : initialImage,
   );
   const [prompt, setPrompt] = useState(initialPrompt);
-  const [localObjectUrl, setLocalObjectUrl] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  const [picked, setPicked] = useState<{ base: PickedImage; image1: PickedImage; image2: PickedImage }>({
+    base: { file: null, objectUrl: null },
+    image1: { file: null, objectUrl: null },
+    image2: { file: null, objectUrl: null },
+  });
+
+  const pickedRef = useRef(picked);
+
+  useEffect(() => {
+    pickedRef.current = picked;
+  }, [picked]);
 
   useEffect(() => {
     return () => {
-      if (localObjectUrl) {
-        URL.revokeObjectURL(localObjectUrl);
+      const current = pickedRef.current;
+      for (const k of Object.keys(current) as Array<keyof typeof current>) {
+        const url = current[k].objectUrl;
+        if (url) URL.revokeObjectURL(url);
       }
     };
-  }, [localObjectUrl]);
+  }, []);
 
-  const handlePickImage = () => {
-    fileInputRef.current?.click();
+
+  const handlePick = (which: 'base' | 'image1' | 'image2') => {
+    if (which === 'base') baseInputRef.current?.click();
+    if (which === 'image1') image1InputRef.current?.click();
+    if (which === 'image2') image2InputRef.current?.click();
   };
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (which: 'base' | 'image1' | 'image2') => (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (!validateImageFile(file)) return;
 
-    if (!file.type.startsWith('image/')) {
-      toast.error('请选择图片文件');
-      return;
-    }
+    setPicked(prev => {
+      const prevUrl = prev[which].objectUrl;
+      if (prevUrl) URL.revokeObjectURL(prevUrl);
 
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error('图片大小不能超过 10MB');
-      return;
-    }
+      const url = URL.createObjectURL(file);
+      const next = {
+        ...prev,
+        [which]: { file, objectUrl: url },
+      };
 
-    if (localObjectUrl) {
-      URL.revokeObjectURL(localObjectUrl);
-    }
+      // base 图同时作为页面主预览与历史记录原图
+      if (which === 'base') {
+        setImage({
+          id: `upload-${Date.now()}`,
+          url,
+          source: 'album',
+          timestamp: Date.now(),
+        });
+      }
 
-    const url = URL.createObjectURL(file);
-    setLocalObjectUrl(url);
-    setSelectedFile(file);
-    setImage({
-      id: `upload-${Date.now()}`,
-      url,
-      source: 'album',
-      timestamp: Date.now(),
+      return next;
     });
+
+    // allow picking same file again
+    event.currentTarget.value = '';
   };
 
   const handleGenerate = () => {
-    if (!image) return;
+    if (!image) {
+      toast.error('请先选择图片');
+      return;
+    }
 
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt) {
@@ -72,14 +115,21 @@ export function UploadPage() {
       return;
     }
 
-    if (!selectedFile) {
-      toast.error('请先上传一张图片');
+    if (!picked.base.file || !picked.image1.file || !picked.image2.file) {
+      toast.error('请依次选择图片、图片1、图片2');
       return;
     }
 
     storageService.addRecentImage(image);
-    navigate('/generating', { state: { image, prompt: trimmedPrompt, file: selectedFile } });
+    navigate('/generating', {
+      state: {
+        image,
+        prompt: trimmedPrompt,
+        batchImageFiles: [picked.base.file, picked.image1.file, picked.image2.file],
+      },
+    });
   };
+
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -99,35 +149,72 @@ export function UploadPage() {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-6 space-y-6 pb-32">
-        <Card className="overflow-hidden">
-          <div className="relative aspect-[4/3] bg-gray-100">
-            {image ? (
-              <img
-                src={image.url}
-                alt="Selected"
-                className="w-full h-full object-contain"
-              />
-            ) : (
-              <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-gray-500">
-                <div className="size-14 rounded-full bg-white flex items-center justify-center border">
-                  <ImagePlus className="size-6" />
-                </div>
-                <div className="text-sm">上传一张图片开始</div>
-                <Button variant="outline" onClick={handlePickImage}>
-                  选择图片
-                </Button>
-              </div>
-            )}
-
-            {image && (
-              <div className="absolute top-2 right-2">
-                <Button size="sm" variant="secondary" onClick={handlePickImage}>
-                  重新选择
-                </Button>
-              </div>
-            )}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium text-gray-700">选择 3 张图片</h2>
+            <p className="text-xs text-gray-500">对应节点：2 / 4 / 5</p>
           </div>
-        </Card>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <Card className="overflow-hidden">
+              <div className="relative aspect-square bg-gray-100">
+                {picked.base.objectUrl ? (
+                  <img src={picked.base.objectUrl} alt="图片" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-gray-500">
+                    <ImagePlus className="size-6" />
+                    <div className="text-xs">图片（节点 2）</div>
+                  </div>
+                )}
+                <div className="absolute top-2 right-2">
+                  <Button size="sm" variant="secondary" onClick={() => handlePick('base')}>
+                    {picked.base.objectUrl ? '重选' : '选择'}
+                  </Button>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="overflow-hidden">
+              <div className="relative aspect-square bg-gray-100">
+                {picked.image1.objectUrl ? (
+                  <img src={picked.image1.objectUrl} alt="图片1" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-gray-500">
+                    <ImagePlus className="size-6" />
+                    <div className="text-xs">图片1（节点 4）</div>
+                  </div>
+                )}
+                <div className="absolute top-2 right-2">
+                  <Button size="sm" variant="secondary" onClick={() => handlePick('image1')}>
+                    {picked.image1.objectUrl ? '重选' : '选择'}
+                  </Button>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="overflow-hidden">
+              <div className="relative aspect-square bg-gray-100">
+                {picked.image2.objectUrl ? (
+                  <img src={picked.image2.objectUrl} alt="图片2" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-gray-500">
+                    <ImagePlus className="size-6" />
+                    <div className="text-xs">图片2（节点 5）</div>
+                  </div>
+                )}
+                <div className="absolute top-2 right-2">
+                  <Button size="sm" variant="secondary" onClick={() => handlePick('image2')}>
+                    {picked.image2.objectUrl ? '重选' : '选择'}
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </div>
+
+          <p className="text-xs text-gray-500">
+            为了安全与一致性，网页端按“小程序同款”流程：先上传文件→拿到引用→再提交工作流。
+          </p>
+        </div>
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
@@ -158,24 +245,39 @@ export function UploadPage() {
             <Button
               className="flex-1"
               onClick={handleGenerate}
-              disabled={!image || !prompt.trim()}
+              disabled={!picked.base.file || !picked.image1.file || !picked.image2.file || !prompt.trim()}
             >
               生成
             </Button>
           </div>
           <p className="text-xs text-center text-gray-500">
-            上传 1 张图片 · 输入文字后可生成
+            上传 3 张图片 · 输入文字后可生成
           </p>
         </div>
       </div>
 
       <input
-        ref={fileInputRef}
+        ref={baseInputRef}
         type="file"
         accept="image/*"
         className="hidden"
-        onChange={handleFileSelect}
+        onChange={handleFileSelect('base')}
+      />
+      <input
+        ref={image1InputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileSelect('image1')}
+      />
+      <input
+        ref={image2InputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileSelect('image2')}
       />
     </div>
   );
 }
+

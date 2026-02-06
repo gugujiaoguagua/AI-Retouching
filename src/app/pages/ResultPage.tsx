@@ -99,10 +99,12 @@ export function ResultPage() {
   };
 
   const confirmRegenerate = () => {
-    navigate('/generating', {
+    // Web 端 RunningHub 为 B 模式：需要重新选择文件（File）才能再次生成
+    toast.info('请重新选择 3 张图片后再生成');
+    navigate('/upload', {
       state: {
-        image: result.originalImage
-      }
+        prompt: result.prompt,
+      },
     });
   };
 

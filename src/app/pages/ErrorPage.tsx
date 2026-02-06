@@ -10,12 +10,14 @@ export function ErrorPage() {
   const error = location.state?.error as GenerationError | undefined;
   const image = location.state?.image as ImageData | undefined;
   const prompt = location.state?.prompt as string | undefined;
+  const batchImageFiles = location.state?.batchImageFiles as File[] | undefined;
 
   const handleRetry = () => {
     if (image) {
-      navigate('/generating', { state: { image, prompt } });
+      navigate('/generating', { state: { image, prompt, batchImageFiles } });
       return;
     }
+
 
     navigate('/');
   };
