@@ -299,10 +299,16 @@ export function extractImageUrlsFromResults(results: any[]): string[] {
     }
 
     const u = url.toLowerCase();
+
+    // ComfyUI common pattern: /view?filename=...&type=output | input
+    if (u.includes('type=output')) s += 10;
+    if (u.includes('type=input')) s -= 10;
+
     if (u.includes('/upload') || u.includes('upload')) s -= 3;
     if (u.includes('/output') || u.includes('output')) s += 2;
     if (u.includes('result')) s += 2;
     if (u.includes('original') || u.includes('origin')) s -= 2;
+
 
     return s;
   };

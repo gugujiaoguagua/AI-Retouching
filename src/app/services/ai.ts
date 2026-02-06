@@ -65,97 +65,103 @@ export async function generateImage(
     }
   ) => void
 ): Promise<string> {
-  if (import.meta.env.PROD) {
-    const prompt = options?.prompt?.trim() ?? '';
-    const files = (options?.files?.filter(Boolean) ?? []) as File[];
-
-    // B 模式：必须先上传文件再 run（前端只把 File 交给同域 Functions）
-    if (!files.length) {
-      throw new Error('missing-file');
+  const useMock = import.meta.env.VITE_MOCK_AI === 'true';
+  if (useMock) {
+    const steps = 10;
+    for (let i = 0; i <= steps; i++) {
+      await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500));
+      onProgress?.(i / steps);
     }
 
-    onProgress?.(0.05, { phase: 'run' });
-
-    // 1) run
-    const runForm = new FormData();
-    for (const f of files) {
-      runForm.append('file', f, f.name);
-    }
-    if (prompt) runForm.set('prompt', prompt);
-
-    const runResp = await fetch('/api/runninghub/run', {
-      method: 'POST',
-      body: runForm,
-    });
-
-    if (!runResp.ok) {
+    if (Math.random() < 0.03) {
       throw new Error('generation-failed');
     }
 
-    const runJson = (await runResp.json().catch(() => null)) as null | { taskId?: string };
-    const taskId = typeof runJson?.taskId === 'string' ? runJson.taskId : '';
-    if (!taskId) {
-      throw new Error('generation-failed');
-    }
-
-    onProgress?.(0.15, { phase: 'query', taskId });
-
-    // 2) poll query
-    const startedAt = Date.now();
-    const timeoutMs = 3 * 60 * 1000;
-    const intervalMs = 1200;
-
-    while (Date.now() - startedAt < timeoutMs) {
-      const queryResp = await fetch('/api/runninghub/query', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ taskId }),
-      });
-
-      if (!queryResp.ok) {
-        throw new Error('generation-failed');
-      }
-
-      const queryJson = (await queryResp.json().catch(() => null)) as null | {
-        status?: string;
-        results?: Array<{ url?: string }>;
-      };
-
-      const status = (queryJson?.status ?? '').toUpperCase();
-      onProgress?.(Math.min(0.95, 0.15), { phase: 'query', taskId, status });
-      if (status === 'SUCCESS' || status === 'SUCCEEDED' || status === 'DONE' || status === 'COMPLETED') {
-        const url = queryJson?.results?.[0]?.url;
-        onProgress?.(1, { phase: 'done', taskId, status });
-        return typeof url === 'string' && url ? url : `/api/runninghub/image?taskId=${encodeURIComponent(taskId)}&index=0`;
-      }
-
-      if (status === 'FAILED' || status === 'FAIL' || status === 'ERROR' || status === 'CANCELED' || status === 'CANCELLED') {
-        throw new Error('generation-failed');
-      }
-
-      const elapsed = Date.now() - startedAt;
-      const p = Math.min(0.95, 0.15 + (elapsed / timeoutMs) * 0.8);
-      onProgress?.(p);
-
-      await new Promise(resolve => setTimeout(resolve, intervalMs));
-    }
-
-    throw new Error('timeout');
+    return originalUrl;
   }
 
+  const prompt = options?.prompt?.trim() ?? '';
+  const files = (options?.files?.filter(Boolean) ?? []) as File[];
 
-  const steps = 10;
-  for (let i = 0; i <= steps; i++) {
-    await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500));
-    onProgress?.(i / steps);
+  // B 模式：必须先上传文件再 run（前端只把 File 交给同域 Functions）
+  if (!files.length) {
+    throw new Error('missing-file');
   }
 
-  if (Math.random() < 0.03) {
+  onProgress?.(0.05, { phase: 'run' });
+
+  // 1) run
+  const runForm = new FormData();
+  for (const f of files) {
+    runForm.append('file', f, f.name);
+  }
+  if (prompt) runForm.set('prompt', prompt);
+
+  const runResp = await fetch('/api/runninghub/run', {
+    method: 'POST',
+    body: runForm,
+  });
+
+  if (runResp.status === 404 || runResp.status === 405) {
+    // local dev without Functions / wrong routing
+    throw new Error('backend-not-available');
+  }
+
+  if (!runResp.ok) {
     throw new Error('generation-failed');
   }
 
-  return originalUrl;
+  const runJson = (await runResp.json().catch(() => null)) as null | { taskId?: string };
+  const taskId = typeof runJson?.taskId === 'string' ? runJson.taskId : '';
+  if (!taskId) {
+    throw new Error('generation-failed');
+  }
+
+  onProgress?.(0.15, { phase: 'query', taskId });
+
+  // 2) poll query
+  const startedAt = Date.now();
+  const timeoutMs = 3 * 60 * 1000;
+  const intervalMs = 1200;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const queryResp = await fetch('/api/runninghub/query', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ taskId }),
+    });
+
+    if (!queryResp.ok) {
+      throw new Error('generation-failed');
+    }
+
+    const queryJson = (await queryResp.json().catch(() => null)) as null | {
+      status?: string;
+      results?: Array<{ url?: string }>;
+    };
+
+    const status = (queryJson?.status ?? '').toUpperCase();
+    onProgress?.(Math.min(0.95, 0.15), { phase: 'query', taskId, status });
+    if (status === 'SUCCESS' || status === 'SUCCEEDED' || status === 'DONE' || status === 'COMPLETED') {
+      const url = queryJson?.results?.[0]?.url;
+      onProgress?.(1, { phase: 'done', taskId, status });
+      return typeof url === 'string' && url ? url : `/api/runninghub/image?taskId=${encodeURIComponent(taskId)}&index=0`;
+    }
+
+    if (status === 'FAILED' || status === 'FAIL' || status === 'ERROR' || status === 'CANCELED' || status === 'CANCELLED') {
+      throw new Error('generation-failed');
+    }
+
+    const elapsed = Date.now() - startedAt;
+    const p = Math.min(0.95, 0.15 + (elapsed / timeoutMs) * 0.8);
+    onProgress?.(p);
+
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+
+  throw new Error('timeout');
 }
+
 
 // Error handling helper
 export function parseError(error: unknown): GenerationError {
@@ -191,6 +197,14 @@ export function parseError(error: unknown): GenerationError {
       type: 'compliance',
       message: '该图片内容不支持生成',
       action: '请选择其他图片'
+    };
+  }
+
+  if (errorMessage.includes('backend-not-available')) {
+    return {
+      type: 'service-busy',
+      message: '未连接生成服务',
+      action: '请使用已部署环境（带 /api/runninghub/* Functions）或开启 VITE_MOCK_AI'
     };
   }
 

@@ -251,16 +251,21 @@ export async function onRequestPost(context: { request: Request; env: Record<str
       });
     }
 
-    // Optional prompt injection
-    const promptNodeId = promptNodeIdRaw ? Number(promptNodeIdRaw) : undefined;
-    if (prompt && promptNodeId && Number.isFinite(promptNodeId) && promptNodeId > 0) {
+    // Prompt injection
+    // - Prefer env: RUNNINGHUB_PROMPT_NODE_ID
+    // - Fallback: node 1 (common for ComfyUI-style workflows)
+    const parsedPromptNodeId = promptNodeIdRaw ? Number(promptNodeIdRaw) : Number.NaN;
+    const effectivePromptNodeId = Number.isFinite(parsedPromptNodeId) && parsedPromptNodeId > 0 ? parsedPromptNodeId : 1;
+
+    if (prompt) {
       nodeInputs.push({
-        nodeId: promptNodeId,
+        nodeId: effectivePromptNodeId,
         fieldName: promptFieldName,
         fieldValue: prompt,
         fieldType: promptFieldType,
       });
     }
+
 
     const basePayload: Record<string, unknown> = {
       // workflowId 有的入口走 path（.../workflow/:id），有的入口走 body
