@@ -149,7 +149,18 @@ export function buildQueryCandidates(env: RunningHubEnv): string[] {
   const hosts = parseCsv(env['RUNNINGHUB_RUN_HOSTS']);
   const fallbackHosts = hosts.length
     ? hosts
-    : ['api.runninghub.cn', 'www.runninghub.cn', 'api.runninghub.com', 'www.runninghub.com'];
+    : [
+        // 国内
+        'www.runninghub.cn',
+        'api.runninghub.cn',
+        // 国际版
+        'www.runninghub.ai',
+        'api.runninghub.ai',
+        // 旧兜底
+        'www.runninghub.com',
+        'api.runninghub.com',
+      ];
+
 
   const paths = [
     '/openapi_v2/query/task',

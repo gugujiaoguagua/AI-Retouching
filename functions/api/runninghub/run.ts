@@ -56,8 +56,24 @@ export async function onRequestPost(context: { request: Request; env: Record<str
 
     const imageMappings = readImageNodeMappings(context.env);
     if (!imageMappings.length) {
-      return json({ error: 'missing-image-node-config' }, { status: 500 });
+      return json(
+        {
+          error: 'missing-image-node-config',
+          hint: '请在 Pages Functions 环境变量中配置图片节点映射（支持多图）',
+          required: ['RUNNINGHUB_IMAGE_NODE_MAP（推荐）', '或 RUNNINGHUB_IMAGE_NODE_ID + RUNNINGHUB_IMAGE_PARAM_KEY'],
+          example: {
+            RUNNINGHUB_IMAGE_NODE_MAP:
+              '[{"nodeId":2,"fieldName":"image","fieldType":"file"},{"nodeId":4,"fieldName":"image","fieldType":"file"},{"nodeId":5,"fieldName":"image","fieldType":"file"}]',
+          },
+        },
+        { status: 500 }
+      );
     }
+
+    console.log(
+      `[runninghub] run start files=${files.length} mappings=${imageMappings.length} upload=${safeUrlForLog(uploadUrl)}`
+    );
+
     if (files.length < imageMappings.length) {
       return json({ error: 'not-enough-files', required: imageMappings.length, received: files.length }, { status: 400 });
     }
@@ -77,6 +93,7 @@ export async function onRequestPost(context: { request: Request; env: Record<str
       });
 
       if (!upstream.ok) {
+        console.warn(`[runninghub] upload failed status=${upstream.status} url=${safeUrlForLog(uploadUrl)}`);
         return json(
           {
             error: 'upload-failed',
@@ -88,6 +105,7 @@ export async function onRequestPost(context: { request: Request; env: Record<str
           { status: 502 }
         );
       }
+
 
       const payload = await upstream.json().catch(() => null);
       const ref = extractUploadRef(payload);
@@ -169,14 +187,17 @@ export async function onRequestPost(context: { request: Request; env: Record<str
       }).catch(() => null);
 
       if (!resp) {
+        console.warn(`[runninghub] run gateway fetch failed url=${urlForLog}`);
         errors.push({ url: urlForLog });
         continue;
       }
 
       if (!resp.ok) {
+        console.warn(`[runninghub] run gateway bad status=${resp.status} url=${urlForLog}`);
         errors.push({ url: urlForLog, status: resp.status });
         continue;
       }
+
 
       const data = await resp.json().catch(() => null);
       const taskId = extractTaskId(data);
@@ -198,7 +219,13 @@ export async function onRequestPost(context: { request: Request; env: Record<str
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'unknown';
-    // Never leak secrets or signed urls in error detail
-    return json({ error: 'internal-error', message: msg.startsWith('missing-env:') ? msg : 'internal' }, { status: 500 });
+
+    if (msg.startsWith('missing-env:')) {
+      const key = msg.slice('missing-env:'.length);
+      return json({ error: 'missing-env', key }, { status: 500 });
+    }
+
+    console.error('[runninghub] run internal error');
+    return json({ error: 'internal-error' }, { status: 500 });
   }
 }
