@@ -104,7 +104,7 @@ export function UploadPage() {
   };
 
   const handleGenerate = () => {
-    if (!image) {
+    if (!picked.base.file) {
       toast.error('请先选择图片');
       return;
     }
@@ -115,17 +115,20 @@ export function UploadPage() {
       return;
     }
 
-    if (!picked.base.file || !picked.image1.file || !picked.image2.file) {
-      toast.error('请依次选择图片、图片1、图片2');
-      return;
-    }
+    const baseUrl = picked.base.objectUrl ?? URL.createObjectURL(picked.base.file);
+    const nextImage: ImageData = {
+      id: `upload-${Date.now()}`,
+      url: baseUrl,
+      source: 'album',
+      timestamp: Date.now(),
+    };
 
-    storageService.addRecentImage(image);
+    storageService.addRecentImage(nextImage);
     navigate('/generating', {
       state: {
-        image,
+        image: nextImage,
         prompt: trimmedPrompt,
-        batchImageFiles: [picked.base.file, picked.image1.file, picked.image2.file],
+        batchImageSlots: [picked.base.file, picked.image1.file, picked.image2.file],
       },
     });
   };
@@ -151,8 +154,8 @@ export function UploadPage() {
       <main className="max-w-3xl mx-auto px-4 py-6 space-y-6 pb-32">
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-gray-700">选择 3 张图片</h2>
-            <p className="text-xs text-gray-500">对应节点：2 / 4 / 5</p>
+            <h2 className="text-sm font-medium text-gray-700">选择 1-3 张图片</h2>
+            <p className="text-xs text-gray-500">不足会自动补白底图（节点：2 / 4 / 5）</p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -245,13 +248,13 @@ export function UploadPage() {
             <Button
               className="flex-1"
               onClick={handleGenerate}
-              disabled={!picked.base.file || !picked.image1.file || !picked.image2.file || !prompt.trim()}
+              disabled={!picked.base.file || !prompt.trim()}
             >
               生成
             </Button>
           </div>
           <p className="text-xs text-center text-gray-500">
-            上传 3 张图片 · 输入文字后可生成
+            至少上传 1 张图片 · 不足会自动补白底图
           </p>
         </div>
       </div>

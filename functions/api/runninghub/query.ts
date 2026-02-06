@@ -1,6 +1,7 @@
 import {
   buildAuthHeaders,
   buildQueryCandidates,
+  extractImageUrlsFromResults,
   extractResults,
   extractStatus,
   getEnv,
@@ -11,36 +12,6 @@ import {
 
 type QueryBody = { taskId?: string };
 
-function extractImageUrlsFromResults(results: any[]): string[] {
-  const urls: string[] = [];
-
-  const visit = (v: any) => {
-    if (!v) return;
-    if (typeof v === 'string') {
-      // heuristic: only treat http(s) as URL candidates
-      if (v.startsWith('http://') || v.startsWith('https://')) urls.push(v);
-      return;
-    }
-    if (Array.isArray(v)) {
-      for (const x of v) visit(x);
-      return;
-    }
-    if (typeof v === 'object') {
-      // common keys
-      const maybe = (v as any).url ?? (v as any).imageUrl ?? (v as any).imgUrl;
-      if (typeof maybe === 'string') visit(maybe);
-
-      for (const key of Object.keys(v)) {
-        if (key.toLowerCase().includes('token')) continue;
-        visit((v as any)[key]);
-      }
-    }
-  };
-
-  visit(results);
-  // de-dup while preserving order
-  return [...new Set(urls)];
-}
 
 export async function onRequestPost(context: { request: Request; env: Record<string, string | undefined> }) {
   try {

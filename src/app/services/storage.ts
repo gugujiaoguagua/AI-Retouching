@@ -95,14 +95,36 @@ export const storageService = {
     }
   },
 
-  addToHistory(result: GenerationResult): void {
+  upsertHistoryItem(result: GenerationResult): void {
     try {
       const history = this.getHistory();
-      const updated = [result, ...history].slice(0, MAX_HISTORY);
+      const idx = history.findIndex(item => item.id === result.id);
+      const next = idx >= 0 ? [result, ...history.filter((_, i) => i !== idx)] : [result, ...history];
+      const updated = next.slice(0, MAX_HISTORY);
       localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
     } catch (error) {
-      console.error('Failed to save to history:', error);
+      console.error('Failed to upsert history item:', error);
     }
+  },
+
+  updateHistoryItem(id: string, patch: Partial<GenerationResult>): GenerationResult | null {
+    try {
+      const history = this.getHistory();
+      const idx = history.findIndex(item => item.id === id);
+      if (idx < 0) return null;
+      const updatedItem: GenerationResult = { ...history[idx], ...patch };
+      const updated = history.map(item => (item.id === id ? updatedItem : item));
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+      return updatedItem;
+    } catch (error) {
+      console.error('Failed to update history item:', error);
+      return null;
+    }
+  },
+
+  addToHistory(result: GenerationResult): void {
+    // 保持旧 API：等价于 upsert
+    this.upsertHistoryItem(result);
   },
 
   clearHistory(): void {

@@ -18,6 +18,56 @@ import { storageService } from '@/app/services/storage';
 import type { ImageData, GenerationResult } from '@/app/types';
 import { toast } from 'sonner';
 
+function formatDuration(ms: number) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+async function fileToDataUrl(file: File): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('read-file-failed'));
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function createWhitePngFileLike(base: File, name: string): Promise<File> {
+  let width = 1024;
+  let height = 1024;
+
+  try {
+    const bmp = await createImageBitmap(base);
+    width = bmp.width || width;
+    height = bmp.height || height;
+    bmp.close();
+  } catch {
+    // ignore
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    // fallback: empty file
+    return new File([new Blob([], { type: 'image/png' })], name, { type: 'image/png' });
+  }
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((b) => {
+      if (!b) return reject(new Error('canvas-to-blob-failed'));
+      resolve(b);
+    }, 'image/png');
+  });
+
+  return new File([blob], name, { type: 'image/png' });
+}
+
 export function GeneratingPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -25,13 +75,25 @@ export function GeneratingPage() {
   const prompt = location.state?.prompt as string | undefined;
   const file = location.state?.file as File | undefined;
   const batchImageFiles = location.state?.batchImageFiles as File[] | undefined;
-
+  const batchImageSlots = location.state?.batchImageSlots as Array<File | null> | undefined;
 
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState('准备中...');
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [canBackground, setCanBackground] = useState(false);
+  const [elapsedLabel, setElapsedLabel] = useState('00:00');
+
   const cancelledRef = useRef(false);
+  const mountedRef = useRef(true);
+  const historyIdRef = useRef<string | null>(null);
+  const startedAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!image) {
@@ -41,88 +103,170 @@ export function GeneratingPage() {
 
     // Allow background after 3 seconds
     const timer = setTimeout(() => {
+      if (!mountedRef.current) return;
       setCanBackground(true);
     }, 3000);
 
+    const ticker = setInterval(() => {
+      const startedAt = startedAtRef.current;
+      if (!startedAt) return;
+      if (!mountedRef.current) return;
+      setElapsedLabel(formatDuration(Date.now() - startedAt));
+    }, 500);
+
     startGeneration();
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(ticker);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [image]);
 
   const startGeneration = async () => {
     if (!image) return;
 
-    const files = Array.isArray(batchImageFiles) && batchImageFiles.length ? batchImageFiles : file ? [file] : [];
-    if (import.meta.env.PROD) {
-      // 当前 RunningHub 工作流为 B 模式：必须 upload 文件引用，且此页面约定 3 张图
-      if (files.length < 3) {
-        toast.error('请从相册选择 3 张图片后再生成');
-        navigate('/upload', { state: { prompt }, replace: true });
-        return;
+    const fallbackFiles = Array.isArray(batchImageFiles) && batchImageFiles.length ? batchImageFiles : file ? [file] : [];
+    const slots = Array.isArray(batchImageSlots) && batchImageSlots.length
+      ? batchImageSlots
+      : [fallbackFiles[0] ?? null, fallbackFiles[1] ?? null, fallbackFiles[2] ?? null];
+
+    const baseFile = slots[0] ?? null;
+    if (!baseFile) {
+      toast.error('请先选择至少 1 张图片');
+      navigate('/upload', { state: { prompt }, replace: true });
+      return;
+    }
+
+    // 自动补齐白底图，保证后端能按 3 节点注入
+    const resolvedFiles: File[] = [baseFile];
+    for (let i = 1; i < 3; i++) {
+      const f = slots[i];
+      if (f) {
+        resolvedFiles.push(f);
+      } else {
+        resolvedFiles.push(await createWhitePngFileLike(baseFile, `blank-${i}.png`));
       }
     }
 
-    try {
-      // Step 1: Generating
-      setCurrentStep('生成中...');
-      setProgress(10);
-      const generationStartedAt = Date.now();
+    const startedAt = Date.now();
+    startedAtRef.current = startedAt;
 
+    // 生成输入预览（用于渲染记录）
+    const inputPreviews = await Promise.all(resolvedFiles.map(f => fileToDataUrl(f)));
+
+    const historyId = `rh-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    historyIdRef.current = historyId;
+
+    const originalForRecord: ImageData = {
+      id: `upload-${startedAt}`,
+      url: inputPreviews[0] || image.url,
+      source: 'album',
+      timestamp: startedAt,
+    };
+
+    storageService.upsertHistoryItem({
+      id: historyId,
+      originalImage: originalForRecord,
+      prompt,
+      timestamp: startedAt,
+      status: 'rendering',
+      startedAt,
+      inputPreviews,
+    });
+
+    try {
+      if (mountedRef.current) {
+        setCurrentStep('上传并提交任务...');
+        setProgress(10);
+      }
 
       const generatedUrl = await generateImage(
         image.url,
         {
           prompt,
-          file,
-          files: Array.isArray(batchImageFiles) && batchImageFiles.length ? batchImageFiles : file ? [file] : [],
+          files: resolvedFiles,
         },
-        (genProgress) => {
+        (genProgress, meta) => {
           if (cancelledRef.current) return;
-          setProgress(10 + genProgress * 80); // 10% to 90%
+
+          if (meta?.taskId) {
+            storageService.updateHistoryItem(historyId, { taskId: meta.taskId });
+          }
+
+          if (meta?.phase === 'query' && meta?.status) {
+            storageService.updateHistoryItem(historyId, { status: 'rendering' });
+            if (mountedRef.current) {
+              setCurrentStep(`渲染中（${meta.status}）...`);
+            }
+          }
+
+          if (mountedRef.current) {
+            const p = Math.min(0.95, Math.max(0, genProgress));
+            setProgress(10 + p * 80); // 10% to 90%
+          }
         }
       );
 
-
       if (cancelledRef.current) return;
 
-      // Step 3: Post-processing
-      setCurrentStep('后处理中...');
-      setProgress(95);
+      if (mountedRef.current) {
+        setCurrentStep('后处理中...');
+        setProgress(95);
+      }
 
       await new Promise(resolve => setTimeout(resolve, 1000));
       if (cancelledRef.current) return;
 
-      setProgress(100);
+      const endedAt = Date.now();
+      const elapsedMs = endedAt - startedAt;
 
-      const generationEndedAt = Date.now();
-      const elapsedMs = generationEndedAt - generationStartedAt;
       const billedMinutes = Math.max(1, Math.ceil(elapsedMs / 60000));
       storageService.deductPoints(billedMinutes, `生成扣费（${billedMinutes} 分钟）`);
       toast.success(`本次生成扣费 ${billedMinutes} 积分`);
 
-      // Save to history
-      const result: GenerationResult = {
-        id: `gen-${Date.now()}`,
-        originalImage: image,
+      const updated = storageService.updateHistoryItem(historyId, {
+        status: 'completed',
         generatedUrl,
-        prompt,
-        timestamp: Date.now()
-      };
+        endedAt,
+        elapsedMs,
+      });
 
-      storageService.addToHistory(result);
+      if (mountedRef.current) {
+        setProgress(100);
+      }
 
       // Navigate to result page
-      navigate('/result', { state: { result }, replace: true });
+      const result: GenerationResult = updated ?? {
+        id: historyId,
+        originalImage: originalForRecord,
+        generatedUrl,
+        prompt,
+        timestamp: startedAt,
+        status: 'completed',
+        startedAt,
+        endedAt,
+        elapsedMs,
+        inputPreviews,
+      };
 
+      navigate('/result', { state: { result }, replace: true });
     } catch (error) {
+      const endedAt = Date.now();
+      storageService.updateHistoryItem(historyId, {
+        status: 'failed',
+        endedAt,
+        elapsedMs: startedAt ? endedAt - startedAt : undefined,
+        errorMessage: error instanceof Error ? error.message : 'unknown',
+      });
+
       if (cancelledRef.current) return;
 
       const parsedError = parseError(error);
       navigate('/error', {
-        state: { error: parsedError, image, prompt, batchImageFiles },
-        replace: true
+        state: { error: parsedError, image, prompt, batchImageFiles, batchImageSlots },
+        replace: true,
       });
-
     }
   };
 
@@ -132,24 +276,32 @@ export function GeneratingPage() {
 
   const confirmCancel = () => {
     cancelledRef.current = true;
+    const historyId = historyIdRef.current;
+    if (historyId) {
+      storageService.updateHistoryItem(historyId, {
+        status: 'failed',
+        endedAt: Date.now(),
+        elapsedMs: startedAtRef.current ? Date.now() - startedAtRef.current : undefined,
+        errorMessage: 'user-cancelled',
+      });
+    }
     navigate('/', { replace: true });
   };
 
   const handleBackground = () => {
-    // In a real app, this would minimize and allow background processing
-    navigate('/', { replace: true });
+    // 生成逻辑会继续执行（不再依赖页面是否挂载），用户可在“渲染记录”查看进度。
+    navigate('/history', { replace: true });
   };
 
   const getEstimatedTime = () => {
     const remaining = 100 - progress;
     const seconds = Math.ceil((remaining / 100) * 25);
-    return `预计还需 ${seconds} 秒`;
+    return `预计还需 ${seconds} 秒 · 已用 ${elapsedLabel}`;
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white flex items-center justify-center p-4">
       <div className="w-full max-w-md space-y-8">
-        {/* Animation */}
         <div className="flex justify-center">
           <div className="relative">
             <div className="size-32 rounded-full bg-blue-100 animate-pulse" />
@@ -159,12 +311,10 @@ export function GeneratingPage() {
           </div>
         </div>
 
-        {/* Status */}
         <div className="text-center space-y-4">
           <h2 className="text-2xl font-semibold">生成中…</h2>
           <p className="text-gray-600">{currentStep}</p>
 
-          {/* Progress Bar */}
           <div className="space-y-2">
             <Progress value={progress} className="h-2" />
             <div className="flex justify-between text-sm text-gray-500">
@@ -174,7 +324,6 @@ export function GeneratingPage() {
           </div>
         </div>
 
-        {/* Preview Image */}
         {image && (
           <div className="rounded-lg overflow-hidden border-2 border-blue-200">
             <img
@@ -185,45 +334,29 @@ export function GeneratingPage() {
           </div>
         )}
 
-        {/* Actions */}
         <div className="flex flex-col gap-3">
           {canBackground && (
-            <Button
-              variant="outline"
-              onClick={handleBackground}
-              className="w-full"
-            >
-              后台等待
+            <Button variant="outline" onClick={handleBackground} className="w-full">
+              查看渲染记录
             </Button>
           )}
-          <Button
-            variant="ghost"
-            onClick={handleCancel}
-            className="w-full"
-          >
+          <Button variant="ghost" onClick={handleCancel} className="w-full">
             <X className="size-4 mr-2" />
             取消生成
           </Button>
-          <p className="text-xs text-center text-gray-500">
-            取消不会扣费，你可以随时重新生成
-          </p>
+          <p className="text-xs text-center text-gray-500">取消不会扣费，你可以随时重新生成</p>
         </div>
       </div>
 
-      {/* Cancel Confirmation Dialog */}
       <AlertDialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认取消？</AlertDialogTitle>
-            <AlertDialogDescription>
-              当前生成进度将会丢失，但不会产生任何费用。你确定要取消吗？
-            </AlertDialogDescription>
+            <AlertDialogDescription>当前生成进度将会丢失，但不会产生任何费用。你确定要取消吗？</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>继续生成</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmCancel}>
-              确认取消
-            </AlertDialogAction>
+            <AlertDialogAction onClick={confirmCancel}>确认取消</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

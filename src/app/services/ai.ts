@@ -56,7 +56,14 @@ export async function generateImage(
     file?: File;
     files?: File[];
   },
-  onProgress?: (progress: number) => void
+  onProgress?: (
+    progress: number,
+    meta?: {
+      phase?: 'run' | 'query' | 'done';
+      taskId?: string;
+      status?: string;
+    }
+  ) => void
 ): Promise<string> {
   if (import.meta.env.PROD) {
     const prompt = options?.prompt?.trim() ?? '';
@@ -67,7 +74,7 @@ export async function generateImage(
       throw new Error('missing-file');
     }
 
-    onProgress?.(0.05);
+    onProgress?.(0.05, { phase: 'run' });
 
     // 1) run
     const runForm = new FormData();
@@ -91,7 +98,7 @@ export async function generateImage(
       throw new Error('generation-failed');
     }
 
-    onProgress?.(0.15);
+    onProgress?.(0.15, { phase: 'query', taskId });
 
     // 2) poll query
     const startedAt = Date.now();
@@ -115,9 +122,10 @@ export async function generateImage(
       };
 
       const status = (queryJson?.status ?? '').toUpperCase();
+      onProgress?.(Math.min(0.95, 0.15), { phase: 'query', taskId, status });
       if (status === 'SUCCESS' || status === 'SUCCEEDED' || status === 'DONE' || status === 'COMPLETED') {
         const url = queryJson?.results?.[0]?.url;
-        onProgress?.(1);
+        onProgress?.(1, { phase: 'done', taskId, status });
         return typeof url === 'string' && url ? url : `/api/runninghub/image?taskId=${encodeURIComponent(taskId)}&index=0`;
       }
 
@@ -165,7 +173,7 @@ export function parseError(error: unknown): GenerationError {
     return {
       type: 'format',
       message: '缺少上传图片',
-      action: '请从相册选择 3 张图片后再生成'
+      action: '请至少选择 1 张图片后再生成'
     };
   }
 

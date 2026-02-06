@@ -1,6 +1,7 @@
 import {
   buildAuthHeaders,
   buildQueryCandidates,
+  extractImageUrlsFromResults,
   extractResults,
   extractStatus,
   getEnv,
@@ -9,32 +10,6 @@ import {
   safeUrlForLog,
 } from './_shared';
 
-function extractImageUrlsFromResults(results: any[]): string[] {
-  const urls: string[] = [];
-
-  const visit = (v: any) => {
-    if (!v) return;
-    if (typeof v === 'string') {
-      if (v.startsWith('http://') || v.startsWith('https://')) urls.push(v);
-      return;
-    }
-    if (Array.isArray(v)) {
-      for (const x of v) visit(x);
-      return;
-    }
-    if (typeof v === 'object') {
-      const maybe = (v as any).url ?? (v as any).imageUrl ?? (v as any).imgUrl;
-      if (typeof maybe === 'string') visit(maybe);
-      for (const key of Object.keys(v)) {
-        if (key.toLowerCase().includes('token')) continue;
-        visit((v as any)[key]);
-      }
-    }
-  };
-
-  visit(results);
-  return [...new Set(urls)];
-}
 
 async function queryTaskRaw(taskId: string, env: Record<string, string | undefined>) {
   const apiKey = getEnv(env, 'RUNNINGHUB_API_KEY', true)!;

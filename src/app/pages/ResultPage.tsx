@@ -28,7 +28,7 @@ export function ResultPage() {
   const [showRegenerateDialog, setShowRegenerateDialog] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
-  if (!result) {
+  if (!result || !result.generatedUrl) {
     navigate('/');
     return null;
   }

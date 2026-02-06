@@ -15,10 +15,19 @@ export interface AnalysisResult {
 export interface GenerationResult {
   id: string;
   originalImage: ImageData;
-  generatedUrl: string;
+  generatedUrl?: string;
   analysis?: AnalysisResult;
   prompt?: string;
   timestamp: number;
+
+  // RunningHub / 渲染记录增强
+  status?: 'rendering' | 'completed' | 'failed';
+  taskId?: string;
+  startedAt?: number;
+  endedAt?: number;
+  elapsedMs?: number;
+  inputPreviews?: string[];
+  errorMessage?: string;
 }
 
 export type GenerationStatus = 

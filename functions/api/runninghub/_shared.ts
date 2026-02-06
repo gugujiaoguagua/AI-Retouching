@@ -285,6 +285,74 @@ export function extractResults(payload: any): any[] {
   return [];
 }
 
+export function extractImageUrlsFromResults(results: any[]): string[] {
+  const scored = new Map<string, { score: number; order: number }>();
+  let order = 0;
+
+  const scoreUrl = (url: string, keyHint?: string) => {
+    let s = 0;
+    const k = (keyHint ?? '').toLowerCase();
+    if (k) {
+      if (/(output|outputs|result|results|generated|gen|final)/.test(k)) s += 5;
+      if (/(image|img|url)/.test(k)) s += 1;
+      if (/(input|source|origin|upload|raw|original)/.test(k)) s -= 4;
+    }
+
+    const u = url.toLowerCase();
+    if (u.includes('/upload') || u.includes('upload')) s -= 3;
+    if (u.includes('/output') || u.includes('output')) s += 2;
+    if (u.includes('result')) s += 2;
+    if (u.includes('original') || u.includes('origin')) s -= 2;
+
+    return s;
+  };
+
+  const visit = (v: any, keyHint?: string) => {
+    if (!v) return;
+
+    if (typeof v === 'string') {
+      if (v.startsWith('http://') || v.startsWith('https://')) {
+        const url = v;
+        const s = scoreUrl(url, keyHint);
+        const existing = scored.get(url);
+        if (!existing) {
+          scored.set(url, { score: s, order: order++ });
+        } else if (s > existing.score) {
+          scored.set(url, { score: s, order: existing.order });
+        }
+      }
+      return;
+    }
+
+    if (Array.isArray(v)) {
+      for (const x of v) visit(x, keyHint);
+      return;
+    }
+
+    if (typeof v === 'object') {
+      // common keys
+      const maybe = (v as any).url ?? (v as any).imageUrl ?? (v as any).imgUrl;
+      if (typeof maybe === 'string') visit(maybe, keyHint ?? 'url');
+
+      for (const key of Object.keys(v)) {
+        if (key.toLowerCase().includes('token')) continue;
+        visit((v as any)[key], key);
+      }
+    }
+  };
+
+  visit(results);
+
+  return [...scored.entries()]
+    .sort((a, b) => {
+      const sa = a[1];
+      const sb = b[1];
+      if (sb.score !== sa.score) return sb.score - sa.score;
+      return sa.order - sb.order;
+    })
+    .map(([url]) => url);
+}
+
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }

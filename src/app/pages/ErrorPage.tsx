@@ -11,10 +11,11 @@ export function ErrorPage() {
   const image = location.state?.image as ImageData | undefined;
   const prompt = location.state?.prompt as string | undefined;
   const batchImageFiles = location.state?.batchImageFiles as File[] | undefined;
+  const batchImageSlots = location.state?.batchImageSlots as Array<File | null> | undefined;
 
   const handleRetry = () => {
     if (image) {
-      navigate('/generating', { state: { image, prompt, batchImageFiles } });
+      navigate('/generating', { state: { image, prompt, batchImageFiles, batchImageSlots } });
       return;
     }
 
