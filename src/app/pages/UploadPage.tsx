@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ImagePlus } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
@@ -30,17 +30,17 @@ function validateImageFile(file: File) {
 export function UploadPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const initialImage = location.state?.image as ImageData | undefined;
   const initialPrompt = (location.state?.prompt as string | undefined) ?? '';
+
 
   const baseInputRef = useRef<HTMLInputElement>(null);
   const image1InputRef = useRef<HTMLInputElement>(null);
   const image2InputRef = useRef<HTMLInputElement>(null);
 
-  const [image, setImage] = useState<ImageData | undefined>(
-    initialImage?.source === 'example' ? undefined : initialImage,
-  );
   const [prompt, setPrompt] = useState(initialPrompt);
+  const pointsBalance = storageService.getPointsBalance();
+
+
 
   const [picked, setPicked] = useState<{ base: PickedImage; image1: PickedImage; image2: PickedImage }>({
     base: { file: null, objectUrl: null },
@@ -64,14 +64,14 @@ export function UploadPage() {
     };
   }, []);
 
-
   const handlePick = (which: 'base' | 'image1' | 'image2') => {
     if (which === 'base') baseInputRef.current?.click();
     if (which === 'image1') image1InputRef.current?.click();
     if (which === 'image2') image2InputRef.current?.click();
   };
 
-  const handleFileSelect = (which: 'base' | 'image1' | 'image2') => (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (which: 'base' | 'image1' | 'image2') => (event: ChangeEvent<HTMLInputElement>) => {
+
     const file = event.target.files?.[0];
     if (!file) return;
     if (!validateImageFile(file)) return;
@@ -86,15 +86,7 @@ export function UploadPage() {
         [which]: { file, objectUrl: url },
       };
 
-      // base 图同时作为页面主预览与历史记录原图
-      if (which === 'base') {
-        setImage({
-          id: `upload-${Date.now()}`,
-          url,
-          source: 'album',
-          timestamp: Date.now(),
-        });
-      }
+
 
       return next;
     });
@@ -104,6 +96,12 @@ export function UploadPage() {
   };
 
   const handleGenerate = () => {
+    const balance = storageService.getPointsBalance();
+    if (balance < 1) {
+      toast.error('积分不足，无法生成，请先登录并充值积分');
+      return;
+    }
+
     if (!picked.base.file) {
       toast.error('请先选择图片');
       return;
@@ -115,6 +113,7 @@ export function UploadPage() {
       return;
     }
 
+
     const baseUrl = picked.base.objectUrl ?? URL.createObjectURL(picked.base.file);
     const nextImage: ImageData = {
       id: `upload-${Date.now()}`,
@@ -123,7 +122,6 @@ export function UploadPage() {
       timestamp: Date.now(),
     };
 
-    storageService.addRecentImage(nextImage);
     navigate('/generating', {
       state: {
         image: nextImage,
@@ -132,7 +130,6 @@ export function UploadPage() {
       },
     });
   };
-
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -155,7 +152,7 @@ export function UploadPage() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-medium text-gray-700">选择 1-3 张图片</h2>
-            <p className="text-xs text-gray-500">不足会自动补白底图（节点：2 / 4 / 5）</p>
+            <p className="text-xs text-gray-500">不足会自动补白底图</p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -166,7 +163,7 @@ export function UploadPage() {
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-gray-500">
                     <ImagePlus className="size-6" />
-                    <div className="text-xs">图片（节点 2）</div>
+                    <div className="text-xs">图片</div>
                   </div>
                 )}
                 <div className="absolute top-2 right-2">
@@ -184,7 +181,7 @@ export function UploadPage() {
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-gray-500">
                     <ImagePlus className="size-6" />
-                    <div className="text-xs">图片1（节点 4）</div>
+                    <div className="text-xs">图片1</div>
                   </div>
                 )}
                 <div className="absolute top-2 right-2">
@@ -202,7 +199,7 @@ export function UploadPage() {
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-gray-500">
                     <ImagePlus className="size-6" />
-                    <div className="text-xs">图片2（节点 5）</div>
+                    <div className="text-xs">图片2</div>
                   </div>
                 )}
                 <div className="absolute top-2 right-2">
@@ -214,9 +211,7 @@ export function UploadPage() {
             </Card>
           </div>
 
-          <p className="text-xs text-gray-500">
-            为了安全与一致性，网页端按“小程序同款”流程：先上传文件→拿到引用→再提交工作流。
-          </p>
+
         </div>
 
         <div className="space-y-2">
@@ -248,7 +243,7 @@ export function UploadPage() {
             <Button
               className="flex-1"
               onClick={handleGenerate}
-              disabled={!picked.base.file || !prompt.trim()}
+              disabled={!picked.base.file || !prompt.trim() || pointsBalance < 1}
             >
               生成
             </Button>
@@ -256,6 +251,11 @@ export function UploadPage() {
           <p className="text-xs text-center text-gray-500">
             至少上传 1 张图片 · 不足会自动补白底图
           </p>
+          {pointsBalance < 1 && (
+            <p className="text-xs text-center text-red-500">
+              积分不足，无法生成，请先登录并充值积分
+            </p>
+          )}
         </div>
       </div>
 
@@ -283,4 +283,3 @@ export function UploadPage() {
     </div>
   );
 }
-

@@ -1,7 +1,5 @@
-import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ImagePlus, Camera, History, AlertCircle, User } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
 import { Button } from '@/app/components/ui/button';
 import { Card } from '@/app/components/ui/card';
 import { Alert, AlertDescription } from '@/app/components/ui/alert';
@@ -13,22 +11,11 @@ import {
 } from '@/app/components/ui/drawer';
 import { HistoryList } from '@/app/components/HistoryList';
 import { exampleCategories, getExamplePrompt } from '@/app/services/examples';
-import { storageService } from '@/app/services/storage';
-import type { ImageData } from '@/app/types';
 import { toast } from 'sonner';
 
 export function HomePage() {
   const navigate = useNavigate();
-  const [recentImages, setRecentImages] = useState<ImageData[]>([]);
-  const [hasPermission, setHasPermission] = useState(true);
-
-  useEffect(() => {
-    setRecentImages(storageService.getRecentImages());
-  }, []);
-
-  const handleImageSelect = (image: ImageData) => {
-    navigate('/upload', { state: { image } });
-  };
+  const hasPermission = true;
 
   const handleCameraClick = () => {
     // In a real app, this would open the camera
@@ -134,8 +121,8 @@ export function HomePage() {
                       onClick={() => {
                         navigate('/upload', {
                           state: {
-                            prompt: getExamplePrompt(category.id, image.id)
-                          }
+                            prompt: getExamplePrompt(category.id, image.id),
+                          },
                         });
                       }}
                     >
@@ -151,47 +138,6 @@ export function HomePage() {
             ))}
           </div>
         </section>
-
-        {/* Recent Images */}
-        {recentImages.length > 0 && (
-          <section>
-            <h2 className="text-lg font-semibold mb-4">最近使用</h2>
-            <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-3 overflow-hidden">
-              <AnimatePresence>
-                {recentImages.map((image) => (
-                  <motion.div
-                    key={image.id}
-                    layout
-                    initial={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, x: 100 }}
-                    drag="x"
-                    dragConstraints={{ left: 0, right: 100 }}
-                    onDragEnd={(_, info) => {
-                      if (info.offset.x > 50) {
-                        const newImages = recentImages.filter(img => img.id !== image.id);
-                        setRecentImages(newImages);
-                        storageService.removeRecentImage(image.id);
-                        toast.success('已隐藏');
-                      }
-                    }}
-                    className="relative"
-                  >
-                    <Card
-                      className="aspect-square overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all"
-                      onClick={() => handleImageSelect(image)}
-                    >
-                      <img
-                        src={image.url}
-                        alt="最近使用"
-                        className="w-full h-full object-cover"
-                      />
-                    </Card>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
-          </section>
-        )}
 
       </main>
     </div>

@@ -1,10 +1,8 @@
-import type { ImageData, GenerationResult } from '@/app/types';
+import type { GenerationResult } from '@/app/types';
 
-const RECENT_IMAGES_KEY = 'ai-generator-recent-images';
 const HISTORY_KEY = 'ai-generator-history';
 const POINTS_STATE_KEY = 'ai-generator-points-state';
 const AUTH_KEY = 'ai-generator-auth';
-const MAX_RECENT_IMAGES = 8;
 const MAX_HISTORY = 20;
 const MAX_POINTS_TRANSACTIONS = 50;
 
@@ -44,47 +42,6 @@ function getDefaultAccountId() {
 }
 
 export const storageService = {
-  // Recent images
-  getRecentImages(): ImageData[] {
-    try {
-      const data = localStorage.getItem(RECENT_IMAGES_KEY);
-      return data ? JSON.parse(data) : [];
-    } catch {
-      return [];
-    }
-  },
-
-  addRecentImage(image: ImageData): void {
-    try {
-      const recent = this.getRecentImages();
-      // Remove duplicates
-      const filtered = recent.filter(img => img.id !== image.id);
-      // Add to front
-      const updated = [image, ...filtered].slice(0, MAX_RECENT_IMAGES);
-      localStorage.setItem(RECENT_IMAGES_KEY, JSON.stringify(updated));
-    } catch (error) {
-      console.error('Failed to save recent image:', error);
-    }
-  },
-
-  clearRecentImages(): void {
-    try {
-      localStorage.removeItem(RECENT_IMAGES_KEY);
-    } catch (error) {
-      console.error('Failed to clear recent images:', error);
-    }
-  },
-
-  removeRecentImage(id: string): void {
-    try {
-      const recent = this.getRecentImages();
-      const updated = recent.filter(img => img.id !== id);
-      localStorage.setItem(RECENT_IMAGES_KEY, JSON.stringify(updated));
-    } catch (error) {
-      console.error('Failed to remove recent image:', error);
-    }
-  },
-
   // Generation history
   getHistory(): GenerationResult[] {
     try {
@@ -146,7 +103,6 @@ export const storageService = {
   },
 
   clearAllData(): void {
-    this.clearRecentImages();
     this.clearHistory();
   },
 
@@ -348,7 +304,7 @@ export const storageService = {
     };
     const next: PointsAccountState = {
       ...state,
-      balance: state.balance - amount,
+      balance: Math.max(0, state.balance - amount),
       transactions: [tx, ...state.transactions].slice(0, MAX_POINTS_TRANSACTIONS),
     };
     this.setAccountPointsState(accountId, next);

@@ -115,6 +115,10 @@ export function SettingsPage() {
   };
 
   const recharge = (amountYuan: number, allowBonus: boolean) => {
+    if (!auth) {
+      toast.info('请先登录后充值');
+      return;
+    }
     const minAmount = allowBonus ? 0.98 : 1;
     if (!Number.isFinite(amountYuan) || amountYuan < minAmount) {
       toast.error(`充值金额最低 ${formatYuan(minAmount)} 元`);
@@ -207,11 +211,9 @@ export function SettingsPage() {
   };
 
   const getCacheSize = () => {
-    const recentImages = storageService.getRecentImages();
     const history = storageService.getHistory();
     return {
-      images: recentImages.length,
-      history: history.length
+      history: history.length,
     };
   };
 
@@ -375,7 +377,12 @@ export function SettingsPage() {
             <Button
               variant="outline"
               className="w-full"
+              disabled={!auth}
               onClick={() => {
+                if (!auth) {
+                  toast.info('请先登录后充值');
+                  return;
+                }
                 setCustomRechargeAmount('');
                 setShowRechargeDialog(true);
               }}
@@ -383,6 +390,9 @@ export function SettingsPage() {
               <CreditCard className="size-4 mr-2" />
               充值积分
             </Button>
+            {!auth && (
+              <div className="text-xs text-gray-500">登录后可充值积分</div>
+            )}
 
             <div className="text-xs text-gray-600">
               <span className="font-medium">计费规则：</span>
@@ -437,7 +447,7 @@ export function SettingsPage() {
                 <div className="text-left">
                   <p className="font-medium">清理缓存</p>
                   <p className="text-xs text-gray-600 mt-0.5">
-                    {cacheSize.images} 张最近图片，{cacheSize.history} 条历史记录
+                    {cacheSize.history} 条历史记录
                   </p>
                 </div>
               </div>
@@ -505,7 +515,6 @@ export function SettingsPage() {
             <AlertDialogDescription>
               这将删除：
               <ul className="list-disc list-inside mt-2 space-y-1">
-                <li>{cacheSize.images} 张最近使用的图片</li>
                 <li>{cacheSize.history} 条生成历史记录</li>
               </ul>
               <p className="mt-2">此操作无法撤销。</p>
@@ -533,7 +542,7 @@ export function SettingsPage() {
             <section>
               <h3 className="font-semibold mb-2">数据存储</h3>
               <ul className="space-y-1 text-gray-600">
-                <li>• 最近使用的图片和生成历史仅保存在本机</li>
+                <li>• 生成历史仅保存在本机</li>
                 <li>• 不会上传到任何服务器（除非进行生成）</li>
                 <li>• 你可以随时清空缓存</li>
               </ul>

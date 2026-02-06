@@ -138,6 +138,13 @@ export function GeneratingPage() {
       return;
     }
 
+    const balance = storageService.getPointsBalance();
+    if (balance < 1) {
+      toast.error('积分不足，无法生成，请先登录并充值积分');
+      navigate('/settings', { replace: true });
+      return;
+    }
+
     // 自动补齐白底图，保证后端能按 3 节点注入
     const resolvedFiles: File[] = [baseFile];
     for (let i = 1; i < 3; i++) {
