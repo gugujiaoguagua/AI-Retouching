@@ -207,6 +207,53 @@ export function buildQueryCandidates(env: RunningHubEnv): string[] {
 }
 
 
+export function buildUploadCandidates(env: RunningHubEnv): string[] {
+  // 优先级：
+  // 1) 显式多 URL：RUNNINGHUB_UPLOAD_URLS
+  // 2) 单 URL（通常是签名 URL）：RUNNINGHUB_UPLOAD_URL（放首位）
+  // 3) 默认拼装候选：.cn + .ai
+  const explicitUrls = parseCsv(env['RUNNINGHUB_UPLOAD_URLS']);
+  if (explicitUrls.length) return explicitUrls;
+
+  const singleUrl = env['RUNNINGHUB_UPLOAD_URL']?.trim();
+
+  const hosts = parseCsv(env['RUNNINGHUB_UPLOAD_HOSTS']);
+  const fallbackHosts = hosts.length
+    ? hosts
+    : [
+        // 国内
+        'www.runninghub.cn',
+        'api.runninghub.cn',
+        // 国际版
+        'www.runninghub.ai',
+        'api.runninghub.ai',
+      ];
+
+  const paths = parseCsv(env['RUNNINGHUB_UPLOAD_PATHS']);
+  const fallbackPaths = paths.length ? paths : ['/upload/image'];
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  if (singleUrl) {
+    out.push(singleUrl);
+    seen.add(singleUrl);
+  }
+
+  for (const host of fallbackHosts) {
+    for (const path of fallbackPaths) {
+      const p = path.startsWith('/') ? path : `/${path}`;
+      const u = `https://${host}${p}`;
+      if (seen.has(u)) continue;
+      out.push(u);
+      seen.add(u);
+    }
+  }
+
+  return out;
+}
+
+
 export function extractTaskId(payload: any): string | undefined {
   const candidates = [
     payload?.taskId,
@@ -238,29 +285,115 @@ export function extractResults(payload: any): any[] {
   return [];
 }
 
-export function extractUploadRef(payload: any): { fileKey?: string; fileValue?: string } {
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === 'string' && v.trim().length > 0;
+}
+
+function looksLikeImageFileName(v: string): boolean {
+  const s = v.trim();
+  if (!s || s.length > 300) return false;
+  if (s.startsWith('http://') || s.startsWith('https://')) return false;
+  return /\.(png|jpe?g|webp|gif|bmp)$/i.test(s);
+}
+
+function pickString(obj: any, key: string): string | undefined {
+  const v = obj?.[key];
+  return isNonEmptyString(v) ? v.trim() : undefined;
+}
+
+function findLikelyFileKeyFromPayload(payload: any): string | undefined {
+  const queue: any[] = [payload];
+  const seen = new Set<any>();
+  let steps = 0;
+
+  while (queue.length && steps < 200) {
+    const cur = queue.shift();
+    steps += 1;
+    if (!cur || typeof cur !== 'object') continue;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+
+    if (Array.isArray(cur)) {
+      for (const x of cur) queue.push(x);
+      continue;
+    }
+
+    for (const [k, v] of Object.entries(cur)) {
+      if (typeof v === 'string' && looksLikeImageFileName(v)) return v.trim();
+      if (v && typeof v === 'object' && !String(k).toLowerCase().includes('token')) queue.push(v);
+    }
+  }
+
+  return undefined;
+}
+
+export function extractUploadRef(payload: any): { fileKey?: string; fileValue?: unknown } {
+  // 兼容多种网关返回：fileKey/fileValue、key/value、name/filename 等
+  if (isNonEmptyString(payload) && looksLikeImageFileName(payload)) {
+    return { fileKey: payload.trim() };
+  }
+
   const maybeObjects = [payload, payload?.data, payload?.result, payload?.data?.data];
+
   for (const obj of maybeObjects) {
     if (!obj || typeof obj !== 'object') continue;
-    const fileKey = typeof (obj as any).fileKey === 'string' ? (obj as any).fileKey : undefined;
-    const fileValue = typeof (obj as any).fileValue === 'string' ? (obj as any).fileValue : undefined;
-    if (fileKey || fileValue) return { fileKey, fileValue };
 
-    const key = typeof (obj as any).key === 'string' ? (obj as any).key : undefined;
-    const value = typeof (obj as any).value === 'string' ? (obj as any).value : undefined;
-    if (key || value) return { fileKey: key, fileValue: value };
+
+    const fileKey =
+      pickString(obj, 'fileKey') ??
+      pickString(obj, 'key') ??
+      pickString(obj, 'name') ??
+      pickString(obj, 'fileName') ??
+      pickString(obj, 'filename') ??
+      pickString((obj as any)?.data, 'fileKey') ??
+      pickString((obj as any)?.data, 'name') ??
+      pickString((obj as any)?.data, 'fileName') ??
+      pickString((obj as any)?.data, 'filename');
+
+    // fileValue 可能是对象（包含 name/full/url 等），不要强行限制为 string
+    const fileValue = Object.prototype.hasOwnProperty.call(obj as any, 'fileValue')
+      ? (obj as any).fileValue
+      : (obj as any)?.data && Object.prototype.hasOwnProperty.call((obj as any).data, 'fileValue')
+        ? (obj as any).data.fileValue
+        : Object.prototype.hasOwnProperty.call(obj as any, 'value')
+          ? (obj as any).value
+          : undefined;
+
+    if (fileKey || typeof fileValue !== 'undefined') {
+      return { fileKey, fileValue };
+    }
   }
+
+  // 兜底：在返回体里找一个看起来像图片文件名的字段（例如 "xxxx.png"）
+  const fallbackKey = findLikelyFileKeyFromPayload(payload);
+  if (fallbackKey) return { fileKey: fallbackKey };
+
   return {};
 }
 
 export function chooseFileRef(
-  ref: { fileKey?: string; fileValue?: string },
+  ref: { fileKey?: string; fileValue?: unknown },
   mode: 'auto' | 'fileKey' | 'fileValue'
-): string | undefined {
+): unknown {
   if (mode === 'fileKey') return ref.fileKey ?? ref.fileValue;
   if (mode === 'fileValue') return ref.fileValue ?? ref.fileKey;
-  return ref.fileKey ?? ref.fileValue;
+
+  // auto：优先 fileValue.name/full/url（更贴近“完美案例”），否则回退 fileKey
+  const fv = ref.fileValue;
+  if (fv && typeof fv === 'object') {
+    const o = fv as Record<string, unknown>;
+    const name = isNonEmptyString(o.name) ? o.name.trim() : '';
+    if (name) return name;
+    const full = isNonEmptyString(o.full) ? o.full.trim() : '';
+    if (full) return full;
+    const url = isNonEmptyString(o.url) ? o.url.trim() : '';
+    if (url) return url;
+  }
+
+  if (isNonEmptyString(fv)) return fv.trim();
+  return ref.fileKey;
 }
+
 
 export function isProbablySuccessStatus(status: string | undefined): boolean {
   const s = (status ?? '').toUpperCase();

@@ -1,6 +1,7 @@
 import {
   buildAuthHeaders,
   buildRunCandidates,
+  buildUploadCandidates,
   chooseFileRef,
   extractStatus,
   extractTaskId,
@@ -19,7 +20,6 @@ export async function onRequestPost(context: { request: Request; env: Record<str
   try {
     const apiKey = getEnv(context.env, 'RUNNINGHUB_API_KEY', true)!;
     const workflowId = getEnv(context.env, 'RUNNINGHUB_WORKFLOW_ID', true)!;
-    const uploadUrl = getEnv(context.env, 'RUNNINGHUB_UPLOAD_URL', true)!;
 
     const fileValueModeRaw = (context.env['RUNNINGHUB_FILEVALUE_MODE'] ?? 'auto').trim();
     const fileValueMode = (fileValueModeRaw === 'fileKey' || fileValueModeRaw === 'fileValue' ? fileValueModeRaw : 'auto') as
@@ -72,8 +72,13 @@ export async function onRequestPost(context: { request: Request; env: Record<str
       );
     }
 
+    const uploadCandidates = buildUploadCandidates(context.env);
+    if (!uploadCandidates.length) {
+      return json({ error: 'missing-upload-config', required: ['RUNNINGHUB_UPLOAD_URL（或 RUNNINGHUB_UPLOAD_URLS）'] }, { status: 500 });
+    }
+
     console.log(
-      `[runninghub] run start files=${files.length} mappings=${imageMappings.length} upload=${safeUrlForLog(uploadUrl)}`
+      `[runninghub] run start files=${files.length} mappings=${imageMappings.length} uploadCandidates=${uploadCandidates.length} firstUpload=${safeUrlForLog(uploadCandidates[0])}`
     );
 
     if (files.length < imageMappings.length) {
@@ -83,63 +88,149 @@ export async function onRequestPost(context: { request: Request; env: Record<str
     const authHeaders = buildAuthHeaders(apiKey);
 
     const uploadFieldFromEnv = (context.env['RUNNINGHUB_UPLOAD_FIELD'] ?? '').trim();
-    const uploadField = uploadFieldFromEnv
-      ? uploadFieldFromEnv
-      : safeUrlForLog(uploadUrl).includes('/upload/image')
-        ? 'image'
-        : 'file';
 
     const uploadUseBearerRaw = (context.env['RUNNINGHUB_UPLOAD_USE_BEARER'] ?? '').trim().toLowerCase();
-    const uploadUseBearer =
-      uploadUseBearerRaw === 'true'
-        ? true
-        : uploadUseBearerRaw === 'false'
-          ? false
-          : !hasRhQuery(uploadUrl);
+    const uploadUseBearerFixed = uploadUseBearerRaw === 'true' ? true : uploadUseBearerRaw === 'false' ? false : undefined;
 
-    // 1) Upload files first (B-mode)
-    const uploadedRefs: Array<{ fileKey?: string; fileValue?: string }> = [];
-    for (const f of files.slice(0, imageMappings.length)) {
+    function inferUploadField(uploadUrl: string) {
+      if (uploadFieldFromEnv) return uploadFieldFromEnv;
+      return safeUrlForLog(uploadUrl).includes('/upload/image') ? 'image' : 'file';
+    }
+
+    function inferUseBearer(uploadUrl: string) {
+      if (typeof uploadUseBearerFixed === 'boolean') return uploadUseBearerFixed;
+      // 如果 uploadUrl 带 Rh-* 签名 query，通常不需要/不接受 Bearer
+      return !hasRhQuery(uploadUrl);
+    }
+
+    async function uploadOnce(file: File, uploadUrl: string, field: string, useBearer: boolean) {
       const upForm = new FormData();
-      upForm.set(uploadField, f, f.name);
+      upForm.set(field, file, file.name);
 
-      const upstream = await fetch(uploadUrl, {
+      const resp = await fetch(uploadUrl, {
         method: 'POST',
-        headers: uploadUseBearer ? authHeaders : undefined,
+        headers: useBearer ? authHeaders : undefined,
         body: upForm,
       });
 
-
-      if (!upstream.ok) {
-        console.warn(`[runninghub] upload failed status=${upstream.status} url=${safeUrlForLog(uploadUrl)}`);
-        return json(
-          {
-            error: 'upload-failed',
-            upstream: {
-              url: safeUrlForLog(uploadUrl),
-              status: upstream.status,
-            },
-          },
-          { status: 502 }
-        );
+      const contentType = resp.headers.get('content-type') || '';
+      const text = await resp.text().catch(() => '');
+      let data: any = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = null;
       }
 
+      const ref = extractUploadRef(data);
+      const topKeys = data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data).slice(0, 30) : null;
 
-      const payload = await upstream.json().catch(() => null);
-      const ref = extractUploadRef(payload);
-      if (!ref.fileKey && !ref.fileValue) {
+      return {
+        ok: resp.ok,
+        status: resp.status,
+        contentType,
+        bytes: text.length,
+        topKeys,
+        ref,
+      };
+    }
+
+    // 1) Upload files first (B-mode)
+    const uploadedRefs: Array<{ fileKey?: string; fileValue?: unknown }> = [];
+    for (const f of files.slice(0, imageMappings.length)) {
+      let gotRef: { fileKey?: string; fileValue?: unknown } | null = null;
+
+      const attempts: Array<{
+        url: string;
+        field: string;
+        useBearer: boolean;
+        status?: number;
+        bytes?: number;
+        topKeys?: string[] | null;
+      }> = [];
+
+      let sawOkButNoRef = false;
+      let lastBadStatus: number | undefined = undefined;
+
+      for (const candUrl of uploadCandidates) {
+        const uploadField = inferUploadField(candUrl);
+        const altField = uploadField === 'image' ? 'file' : 'image';
+        const useBearer0 = inferUseBearer(candUrl);
+
+        const attemptPlan: Array<{ field: string; useBearer: boolean }> = [];
+        // 优先按当前推断
+        attemptPlan.push({ field: uploadField, useBearer: useBearer0 });
+
+        // 兜底：换字段名（某些入口用 image，有些用 file）
+        if (!uploadFieldFromEnv && altField !== uploadField) {
+          attemptPlan.push({ field: altField, useBearer: useBearer0 });
+        }
+
+        // 兜底：换鉴权方式（某些签名上传入口不需要/不接受 Bearer）
+        if (!uploadUseBearerRaw) {
+          attemptPlan.push({ field: uploadField, useBearer: !useBearer0 });
+        }
+
+        for (const plan of attemptPlan) {
+          const res = await uploadOnce(f, candUrl, plan.field, plan.useBearer);
+          lastBadStatus = res.ok ? lastBadStatus : res.status;
+
+          attempts.push({
+            url: safeUrlForLog(candUrl),
+            field: plan.field,
+            useBearer: plan.useBearer,
+            status: res.status,
+            bytes: res.bytes,
+            topKeys: res.topKeys,
+          });
+
+          if (!res.ok) continue;
+
+          if (res.ref.fileKey || typeof res.ref.fileValue !== 'undefined') {
+            gotRef = res.ref;
+            break;
+          }
+
+          sawOkButNoRef = true;
+        }
+
+        if (gotRef) break;
+      }
+
+      if (!gotRef) {
+        const firstUpload = uploadCandidates[0];
+        if (!sawOkButNoRef) {
+          console.warn(
+            `[runninghub] upload failed status=${lastBadStatus ?? 0} url=${safeUrlForLog(firstUpload)}`
+          );
+          return json(
+            {
+              error: 'upload-failed',
+              upstream: {
+                url: safeUrlForLog(firstUpload),
+                status: lastBadStatus,
+              },
+              attempts,
+            },
+            { status: 502 }
+          );
+        }
+
         return json(
           {
             error: 'upload-no-file-ref',
             upstream: {
-              url: safeUrlForLog(uploadUrl),
+              url: safeUrlForLog(firstUpload),
             },
+            attempts,
           },
           { status: 502 }
         );
       }
-      uploadedRefs.push(ref);
+
+      uploadedRefs.push(gotRef);
     }
+
 
     // 2) Build nodeInfoList from uploaded refs
     const nodeInputs: Array<{ nodeId: number; fieldName: string; fieldValue: unknown; fieldType?: 'file' | 'text' }> = [];
@@ -147,9 +238,11 @@ export async function onRequestPost(context: { request: Request; env: Record<str
       const map = imageMappings[i];
       const ref = uploadedRefs[i];
       const chosen = chooseFileRef(ref, fileValueMode);
-      if (!chosen) {
+      const isEmptyString = typeof chosen === 'string' && chosen.trim().length === 0;
+      if (typeof chosen === 'undefined' || chosen === null || isEmptyString) {
         return json({ error: 'upload-ref-empty' }, { status: 502 });
       }
+
       nodeInputs.push({
         nodeId: map.nodeId,
         fieldName: map.fieldName,
