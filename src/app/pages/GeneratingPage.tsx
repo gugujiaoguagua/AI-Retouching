@@ -140,7 +140,7 @@ export function GeneratingPage() {
 
     const balance = storageService.getPointsBalance();
     if (balance < 1) {
-      toast.error('积分不足，无法生成，请先登录并充值积分');
+      toast.error('积分不足，无法生成，请先在设置中兑换激活码或充值积分');
       navigate('/settings', { replace: true });
       return;
     }

@@ -4,9 +4,12 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
+    "dev": "vite",
     "build": "vite build",
-    "dev": "vite"
+    "license:keygen": "node scripts/keygen.mjs",
+    "license:gen": "node scripts/license-gen.mjs"
   },
+
   "dependencies": {
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
@@ -61,6 +64,7 @@
     "sonner": "2.0.3",
     "tailwind-merge": "3.2.0",
     "tw-animate-css": "1.3.8",
+    "tweetnacl": "^1.0.3",
     "vaul": "1.1.2"
   },
   "devDependencies": {

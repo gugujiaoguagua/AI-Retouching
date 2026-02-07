@@ -9,21 +9,18 @@ import {
   ChevronRight,
   Database,
   Coins,
-  Gift,
   CalendarCheck,
   List,
   CreditCard,
-  QrCode,
-  Phone,
-  LogOut,
-  Cat
+  Cat,
+  Copy,
+  KeyRound,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Button } from '@/app/components/ui/button';
 import { Card } from '@/app/components/ui/card';
 import { Separator } from '@/app/components/ui/separator';
 import { Input } from '@/app/components/ui/input';
-import { Avatar, AvatarFallback, AvatarImage } from '@/app/components/ui/avatar';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -51,20 +48,17 @@ export function SettingsPage() {
   const [showHelpDialog, setShowHelpDialog] = useState(false);
   const [showPointsDialog, setShowPointsDialog] = useState(false);
   const [showRechargeDialog, setShowRechargeDialog] = useState(false);
-  const [customRechargeAmount, setCustomRechargeAmount] = useState('');
-  const [auth, setAuth] = useState(() => storageService.getAuthState());
-  const [showWeChatLoginDialog, setShowWeChatLoginDialog] = useState(false);
-  const [showPhoneLoginDialog, setShowPhoneLoginDialog] = useState(false);
-  const [wechatId, setWechatId] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
+  const [pointsBalance, setPointsBalance] = useState(() => storageService.getPointsBalance());
+  const [pointsTransactions, setPointsTransactions] = useState(() => storageService.getPointsTransactions());
+
+  const deviceId = storageService.getDeviceId();
+  const [activationCode, setActivationCode] = useState('');
+
   const [showCatBurst, setShowCatBurst] = useState(false);
   const [catBurstKey, setCatBurstKey] = useState(0);
   const catBurstTimerRef = useRef<number | null>(null);
   const [catButtonPulse, setCatButtonPulse] = useState(false);
   const catButtonPulseTimerRef = useRef<number | null>(null);
-  const [pointsBalance, setPointsBalance] = useState(() => storageService.getPointsBalance());
-  const [pointsTransactions, setPointsTransactions] = useState(() => storageService.getPointsTransactions());
-  const [starterClaimed, setStarterClaimed] = useState(() => Boolean(storageService.getPointsState().starterClaimed));
 
   const handleClearCache = () => {
     storageService.clearAllData();
@@ -72,25 +66,46 @@ export function SettingsPage() {
     toast.success('缓存已清空');
   };
 
+  const copyText = async (text: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(successMessage);
+    } catch {
+      try {
+        const el = document.createElement('textarea');
+        el.value = text;
+        el.style.position = 'fixed';
+        el.style.left = '-9999px';
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+        toast.success(successMessage);
+      } catch {
+        toast.error('复制失败，请手动复制');
+      }
+    }
+  };
+
+  const handleCopyDeviceId = async () => {
+    await copyText(deviceId, '设备ID已复制');
+  };
+
+  const handleRedeemActivationCode = () => {
+    const res = storageService.redeemActivationCode(activationCode);
+    if (res.ok) {
+      refreshPoints();
+      setActivationCode('');
+      toast.success(res.message);
+    } else {
+      toast.error(res.message);
+    }
+  };
+
   const refreshPoints = () => {
     const state = storageService.getPointsState();
     setPointsBalance(state.balance);
     setPointsTransactions(state.transactions);
-    setStarterClaimed(Boolean(state.starterClaimed));
-  };
-
-  const handleClaimStarterPack = () => {
-    if (!auth) {
-      toast.info('请先登录后领取新手礼包');
-      return;
-    }
-    const res = storageService.claimStarterPack();
-    refreshPoints();
-    if (res.ok) {
-      toast.success('已领取新手礼包 +5');
-    } else {
-      toast.info('新手礼包已领取过');
-    }
   };
 
   const handleCheckIn = () => {
@@ -99,100 +114,18 @@ export function SettingsPage() {
     if (res.ok) {
       toast.success('签到成功 +3');
     } else {
-      toast.info('今天已签到');
+      toast.info(res.reason === 'limit' ? '签到已达上限' : '今天已签到');
     }
   };
 
-  const getRechargeBonus = (amountYuan: number) => {
-    if (amountYuan === 10) return 10;
-    if (amountYuan === 50) return 50;
-    if (amountYuan === 100) return 100;
-    return 0;
-  };
-
-  const formatYuan = (amountYuan: number) => {
-    return Number.isInteger(amountYuan) ? `${amountYuan}` : amountYuan.toFixed(2);
-  };
-
-  const recharge = (amountYuan: number, allowBonus: boolean) => {
-    if (!auth) {
-      toast.info('请先登录后充值');
-      return;
-    }
-    const minAmount = allowBonus ? 0.98 : 1;
-    if (!Number.isFinite(amountYuan) || amountYuan < minAmount) {
-      toast.error(`充值金额最低 ${formatYuan(minAmount)} 元`);
-      return;
-    }
-    const basePoints = amountYuan === 0.98 ? 10 : amountYuan * 10;
-    const bonusPoints = allowBonus ? getRechargeBonus(amountYuan) : 0;
-    const totalPoints = basePoints + bonusPoints;
-    const amountText = formatYuan(amountYuan);
-    const reason = bonusPoints > 0 ? `充值 ${amountText} 元（赠送 ${bonusPoints} 积分）` : `充值 ${amountText} 元`;
-    storageService.addPoints(totalPoints, reason);
-    refreshPoints();
-    toast.success(`充值成功 +${totalPoints} 积分`);
-    setShowRechargeDialog(false);
-    setCustomRechargeAmount('');
-  };
-
-  const handleCustomRecharge = () => {
-    const amount = Number.parseInt(customRechargeAmount.trim(), 10);
-    if (!Number.isFinite(amount)) {
-      toast.error('请输入有效的金额');
-      return;
-    }
-    recharge(amount, false);
-  };
-
-  const maskPhone = (value?: string) => {
-    if (!value) return '';
-    const digits = value.replace(/[^\d]/g, '');
-    if (digits.length !== 11) return value;
-    return `${digits.slice(0, 3)}****${digits.slice(7)}`;
-  };
-
-  const handleLogout = () => {
-    storageService.logout();
-    setAuth(null);
-    refreshPoints();
-    toast.success('已退出登录');
-  };
-
-  const handleWeChatLogin = () => {
-    const trimmed = wechatId.trim();
-    if (!trimmed) {
-      toast.error('请输入微信号');
-      return;
-    }
-    const next = storageService.loginWithWeChat(trimmed);
-    setAuth(next);
-    setShowWeChatLoginDialog(false);
-    setWechatId('');
-    refreshPoints();
-    toast.success('微信登录成功');
-  };
-
-  const handlePhoneLogin = () => {
-    const digits = phoneNumber.replace(/[^\d]/g, '').slice(0, 11);
-    if (digits.length !== 11) {
-      toast.error('请输入 11 位手机号');
-      return;
-    }
-    const next = storageService.loginWithPhone(digits);
-    setAuth(next);
-    setShowPhoneLoginDialog(false);
-    setPhoneNumber('');
-    refreshPoints();
-    toast.success('手机号登录成功');
-  };
-
-  const handleCatBurst = () => {
+  const handleDecompress = () => {
     if (catBurstTimerRef.current) {
       window.clearTimeout(catBurstTimerRef.current);
+      catBurstTimerRef.current = null;
     }
     if (catButtonPulseTimerRef.current) {
       window.clearTimeout(catButtonPulseTimerRef.current);
+      catButtonPulseTimerRef.current = null;
     }
 
     setCatBurstKey((k) => k + 1);
@@ -207,7 +140,22 @@ export function SettingsPage() {
     catBurstTimerRef.current = window.setTimeout(() => {
       setShowCatBurst(false);
       catBurstTimerRef.current = null;
-    }, 1000);
+    }, 900);
+  };
+
+  const POINTS_PACKAGES = [
+    { priceText: '9.9', points: 100 },
+    { priceText: '29.9', points: 300 },
+    { priceText: '49.9', points: 520 },
+    { priceText: '99', points: 1088 },
+  ] as const;
+
+  const buildPurchaseMessage = (pkg: { priceText: string; points: number }) => {
+    return `购买档位：${pkg.priceText} 元 = ${pkg.points} 积分\n设备ID：${deviceId}`;
+  };
+
+  const handleCopyPurchaseMessage = async (pkg: { priceText: string; points: number }) => {
+    await copyText(buildPurchaseMessage(pkg), '购买信息已复制');
   };
 
   const getCacheSize = () => {
@@ -238,67 +186,45 @@ export function SettingsPage() {
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-        {/* Account */}
+        {/* Activation */}
         <section>
-          <h2 className="text-sm font-medium text-gray-700 mb-3">账号</h2>
+          <h2 className="text-sm font-medium text-gray-700 mb-3">激活码</h2>
           <Card className="p-4 space-y-4">
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3 min-w-0">
-                <Avatar className="size-10">
-                  <AvatarImage alt="账号" />
-                  <AvatarFallback className="bg-gray-100 text-gray-700">
-                    {auth?.provider === 'wechat' ? (
-                      <QrCode className="size-4" />
-                    ) : auth?.provider === 'phone' ? (
-                      <Phone className="size-4" />
-                    ) : (
-                      <Cat className="size-4" />
-                    )}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="min-w-0">
-                  <p className="font-medium truncate">
-                    {auth
-                      ? auth.provider === 'wechat'
-                        ? auth.nickname || '微信用户'
-                        : maskPhone(auth.phone) || '手机号用户'
-                      : '未登录'}
-                  </p>
-                  <p className="text-xs text-gray-600 mt-0.5 truncate">
-                    {auth ? (auth.provider === 'wechat' ? '微信登录' : '手机号登录') : '登录后新手礼包按账号限制领取一次'}
-                  </p>
-                </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-medium flex items-center gap-2">
+                  <KeyRound className="size-4 text-gray-600" />
+                  本机设备ID
+                </p>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  购买后把设备ID发给客服出码（绑定本机，不需要登录）
+                </p>
               </div>
-
-              {auth ? (
-                <Button variant="outline" size="sm" onClick={handleLogout}>
-                  <LogOut className="size-4 mr-2" />
-                  退出
-                </Button>
-              ) : null}
+              <Button variant="outline" size="sm" onClick={handleCopyDeviceId}>
+                <Copy className="size-4 mr-2" />
+                复制
+              </Button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setWechatId(auth?.provider === 'wechat' ? auth.nickname || '' : '');
-                  setShowWeChatLoginDialog(true);
-                }}
-              >
-                <QrCode className="size-4 mr-2" />
-                微信登录
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setPhoneNumber(auth?.provider === 'phone' ? auth.phone || '' : '');
-                  setShowPhoneLoginDialog(true);
-                }}
-              >
-                <Phone className="size-4 mr-2" />
-                手机号登录
-              </Button>
+            <div className="text-xs font-mono break-all rounded-md border bg-gray-50 p-2 text-gray-700">
+              {deviceId}
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-700">输入激活码</div>
+              <div className="flex gap-3">
+                <Input
+                  value={activationCode}
+                  onChange={(e) => setActivationCode(e.target.value.slice(0, 256))}
+                  placeholder="例如：AIG1.xxxxx.yyyyy"
+                />
+                <Button onClick={handleRedeemActivationCode} disabled={!activationCode.trim()}>
+                  兑换
+                </Button>
+              </div>
+              <div className="text-xs text-gray-500">
+                兑换成功后会直接增加积分到本机。
+              </div>
             </div>
           </Card>
         </section>
@@ -324,50 +250,40 @@ export function SettingsPage() {
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              {starterClaimed ? (
-                <motion.div
-                  className="relative"
-                  animate={catButtonPulse ? { scale: [1, 1.04, 1] } : { scale: 1 }}
-                  transition={{ duration: 0.24 }}
-                >
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={handleCatBurst}
-                  >
-                    <Cat className="size-4 mr-2" />
-                    解压一下
-                  </Button>
-                  <AnimatePresence>
-                    {showCatBurst && (
-                      <motion.div
-                        key={catBurstKey}
-                        className="absolute left-1/2 -translate-x-1/2 -top-3 pointer-events-none"
-                        initial={{ opacity: 0, y: 0, scale: 0.8 }}
-                        animate={{
-                          opacity: [0, 1, 1, 0],
-                          y: [0, -18, -28, -42],
-                          scale: [0.8, 1.05, 1, 0.7],
-                        }}
-                        transition={{
-                          duration: 0.9,
-                          times: [0, 0.15, 0.5, 1],
-                          ease: 'easeOut',
-                        }}
-                      >
-                        <div className="size-10 rounded-full bg-white/90 border border-amber-200 shadow-sm flex items-center justify-center">
-                          <Cat className="size-6 text-amber-700" />
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </motion.div>
-              ) : (
-                <Button variant="outline" onClick={handleClaimStarterPack}>
-                  <Gift className="size-4 mr-2" />
-                  新手礼包
+              <motion.div
+                className="relative"
+                animate={catButtonPulse ? { scale: [1, 1.04, 1] } : { scale: 1 }}
+                transition={{ duration: 0.24 }}
+              >
+                <Button variant="outline" className="w-full" onClick={handleDecompress}>
+                  <Cat className="size-4 mr-2" />
+                  解压一下
                 </Button>
-              )}
+                <AnimatePresence>
+                  {showCatBurst && (
+                    <motion.div
+                      key={catBurstKey}
+                      className="absolute left-1/2 -translate-x-1/2 -top-3 pointer-events-none"
+                      initial={{ opacity: 0, y: 0, scale: 0.8 }}
+                      animate={{
+                        opacity: [0, 1, 1, 0],
+                        y: [0, -18, -28, -40],
+                        scale: [0.8, 1.05, 1, 0.7],
+                      }}
+                      transition={{
+                        duration: 0.9,
+                        times: [0, 0.15, 0.55, 1],
+                        ease: 'easeOut',
+                      }}
+                    >
+                      <div className="size-10 rounded-full bg-white/90 border border-amber-200 shadow-sm flex items-center justify-center">
+                        <Cat className="size-6 text-amber-700" />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+
               <Button variant="outline" onClick={handleCheckIn}>
                 <CalendarCheck className="size-4 mr-2" />
                 每日签到
@@ -377,28 +293,20 @@ export function SettingsPage() {
             <Button
               variant="outline"
               className="w-full"
-              disabled={!auth}
               onClick={() => {
-                if (!auth) {
-                  toast.info('请先登录后充值');
-                  return;
-                }
-                setCustomRechargeAmount('');
                 setShowRechargeDialog(true);
               }}
             >
               <CreditCard className="size-4 mr-2" />
-              充值积分
+              购买积分
             </Button>
-            {!auth && (
-              <div className="text-xs text-gray-500">登录后可充值积分</div>
-            )}
 
             <div className="text-xs text-gray-600">
               <span className="font-medium">计费规则：</span>
-              1 元 = 10 积分；生成按耗时计费，1 分钟 = 1 积分，不足 1 分钟按 1 积分。
-              <span className="ml-1">充值赠送：</span>
-              10 元多送 10 积分，50 元多送 50 积分，100 元多送 100 积分；自定义金额最低 1 元且不参与赠送。
+              生成按耗时计费，1 分钟 = 1 积分，不足 1 分钟按 1 积分。
+              <span className="ml-1">购买档位：</span>
+              9.9 元 = 100 积分，29.9 元 = 300 积分，49.9 元 = 520 积分，99 元 = 1088 积分。
+              <span className="ml-1">购买后客服发放激活码，回到上方“激活码”兑换入账。</span>
             </div>
 
             <Button
@@ -633,7 +541,7 @@ export function SettingsPage() {
             <section>
               <h3 className="font-semibold mb-2">积分是什么？</h3>
               <p className="text-gray-600">
-                积分用于兑换功能或参与活动（当前为本地演示版，仅保存在本机）。兑换比例为 1 元 = 10 积分；生成按耗时计费，1 分钟 = 1 积分，不足 1 分钟按 1 积分。充值赠送：10 元多送 10 积分，50 元多送 50 积分，100 元多送 100 积分；自定义金额最低 1 元且不参与赠送。你可以在“设置与帮助”的积分模块领取新手礼包、每日签到，并查看明细与充值。
+                积分用于兑换功能或参与活动（当前为本地演示版，仅保存在本机）。兑换比例为 1 元 = 10 积分；生成按耗时计费，1 分钟 = 1 积分，不足 1 分钟按 1 积分。充值档位：9.9 元 = 100 积分，29.9 元 = 300 积分，49.9 元 = 520 积分，99.8 元 = 1088 积分；自定义金额按 1 元 = 10 积分换算。你可以在“设置与帮助”的积分模块每日签到，并查看明细与充值。
               </p>
             </section>
           </div>
@@ -676,92 +584,52 @@ export function SettingsPage() {
       <Dialog open={showRechargeDialog} onOpenChange={setShowRechargeDialog}>
         <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>充值积分</DialogTitle>
+            <DialogTitle>购买积分</DialogTitle>
             <DialogDescription>
-              1 元 = 10 积分；指定档位有赠送，自定义金额不参与赠送
+              选择档位后复制购买信息发给客服，付款后客服返回激活码，你再到“激活码”兑换入账。
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-5 text-sm">
+          <div className="space-y-4 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs text-gray-600 min-w-0">
+                <div className="font-medium">设备ID（绑定本机）</div>
+                <div className="font-mono break-all text-gray-700 mt-1">{deviceId}</div>
+              </div>
+              <Button variant="outline" size="sm" onClick={handleCopyDeviceId}>
+                <Copy className="size-4 mr-2" />
+                复制设备ID
+              </Button>
+            </div>
+
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <Button variant="outline" className="h-auto py-3 flex-col" onClick={() => recharge(0.98, true)}>
-                <span className="font-semibold">0.98 元</span>
-                <span className="text-xs text-gray-500 mt-1">+10 积分</span>
-              </Button>
-              <Button variant="outline" className="h-auto py-3 flex-col" onClick={() => recharge(10, true)}>
-                <span className="font-semibold">10 元</span>
-                <span className="text-xs text-gray-500 mt-1">+110 积分</span>
-              </Button>
-              <Button variant="outline" className="h-auto py-3 flex-col" onClick={() => recharge(50, true)}>
-                <span className="font-semibold">50 元</span>
-                <span className="text-xs text-gray-500 mt-1">+550 积分</span>
-              </Button>
-              <Button variant="outline" className="h-auto py-3 flex-col" onClick={() => recharge(100, true)}>
-                <span className="font-semibold">100 元</span>
-                <span className="text-xs text-gray-500 mt-1">+1100 积分</span>
-              </Button>
+              {POINTS_PACKAGES.map((pkg) => (
+                <Card key={pkg.priceText} className="p-3">
+                  <div className="space-y-2">
+                    <div className="font-semibold">{pkg.priceText} 元</div>
+                    <div className="text-xs text-gray-500">{pkg.points} 积分</div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => handleCopyPurchaseMessage(pkg)}
+                    >
+                      复制购买信息
+                    </Button>
+                  </div>
+                </Card>
+              ))}
             </div>
 
-            <div className="space-y-2">
-              <div className="text-sm font-medium text-gray-700">自定义金额</div>
-              <div className="flex gap-3">
-                <Input
-                  inputMode="numeric"
-                  value={customRechargeAmount}
-                  onChange={(e) => setCustomRechargeAmount(e.target.value.replace(/[^\d]/g, '').slice(0, 6))}
-                  placeholder="最低 1 元"
-                />
-                <Button onClick={handleCustomRecharge} disabled={!customRechargeAmount.trim()}>
-                  充值
-                </Button>
-              </div>
-              <div className="text-xs text-gray-500">
-                自定义金额：按 1 元 = 10 积分换算，不参与 10/50/100 档位赠送。
-              </div>
+            <div className="text-xs text-gray-500">
+              提示：本页面不再“点一下就直接加积分”。积分只会在你兑换激活码后入账。
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
 
-      <Dialog open={showWeChatLoginDialog} onOpenChange={setShowWeChatLoginDialog}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>微信登录</DialogTitle>
-            <DialogDescription>
-              本地演示：使用微信号作为账号标识
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Input
-              value={wechatId}
-              onChange={(e) => setWechatId(e.target.value.slice(0, 32))}
-              placeholder="请输入微信号"
-            />
-            <Button className="w-full" onClick={handleWeChatLogin}>
-              登录
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showPhoneLoginDialog} onOpenChange={setShowPhoneLoginDialog}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>手机号登录</DialogTitle>
-            <DialogDescription>
-              本地演示：仅校验手机号格式，不发送短信
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Input
-              inputMode="numeric"
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value.replace(/[^\d]/g, '').slice(0, 11))}
-              placeholder="请输入 11 位手机号"
-            />
-            <Button className="w-full" onClick={handlePhoneLogin}>
-              登录
-            </Button>
+            <div className="flex justify-end">
+              <Button variant="outline" onClick={() => setShowRechargeDialog(false)}>
+                我已获得激活码
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

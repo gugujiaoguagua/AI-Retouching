@@ -98,7 +98,7 @@ export function UploadPage() {
   const handleGenerate = () => {
     const balance = storageService.getPointsBalance();
     if (balance < 1) {
-      toast.error('积分不足，无法生成，请先登录并充值积分');
+      toast.error('积分不足，无法生成，请先在设置中兑换激活码或充值积分');
       return;
     }
 
@@ -155,60 +155,64 @@ export function UploadPage() {
             <p className="text-xs text-gray-500">不足会自动补白底图</p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Card className="overflow-hidden">
-              <div className="relative aspect-square bg-gray-100">
+          <div className="flex flex-wrap gap-4">
+            <Card className="overflow-hidden w-40 h-40 flex-shrink-0">
+              <div className="relative w-full h-full bg-gray-100">
                 {picked.base.objectUrl ? (
                   <img src={picked.base.objectUrl} alt="图片" className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-gray-500">
-                    <ImagePlus className="size-6" />
-                    <div className="text-xs">图片</div>
+                    <ImagePlus className="size-5" />
+                    <div className="text-[10px]">图片</div>
                   </div>
                 )}
-                <div className="absolute top-2 right-2">
-                  <Button size="sm" variant="secondary" onClick={() => handlePick('base')}>
+                <div className="absolute top-1 right-1">
+                  <Button size="sm" variant="secondary" className="h-7 px-2 text-[10px]" onClick={() => handlePick('base')}>
                     {picked.base.objectUrl ? '重选' : '选择'}
                   </Button>
                 </div>
               </div>
             </Card>
 
-            <Card className="overflow-hidden">
-              <div className="relative aspect-square bg-gray-100">
-                {picked.image1.objectUrl ? (
-                  <img src={picked.image1.objectUrl} alt="图片1" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-gray-500">
-                    <ImagePlus className="size-6" />
-                    <div className="text-xs">图片1</div>
+            {picked.base.objectUrl && (
+              <Card className="overflow-hidden w-40 h-40 flex-shrink-0 animate-in fade-in slide-in-from-left-2">
+                <div className="relative w-full h-full bg-gray-100">
+                  {picked.image1.objectUrl ? (
+                    <img src={picked.image1.objectUrl} alt="图片1" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-gray-500">
+                      <ImagePlus className="size-5" />
+                      <div className="text-[10px]">图片1</div>
+                    </div>
+                  )}
+                  <div className="absolute top-1 right-1">
+                    <Button size="sm" variant="secondary" className="h-7 px-2 text-[10px]" onClick={() => handlePick('image1')}>
+                      {picked.image1.objectUrl ? '重选' : '选择'}
+                    </Button>
                   </div>
-                )}
-                <div className="absolute top-2 right-2">
-                  <Button size="sm" variant="secondary" onClick={() => handlePick('image1')}>
-                    {picked.image1.objectUrl ? '重选' : '选择'}
-                  </Button>
                 </div>
-              </div>
-            </Card>
+              </Card>
+            )}
 
-            <Card className="overflow-hidden">
-              <div className="relative aspect-square bg-gray-100">
-                {picked.image2.objectUrl ? (
-                  <img src={picked.image2.objectUrl} alt="图片2" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-gray-500">
-                    <ImagePlus className="size-6" />
-                    <div className="text-xs">图片2</div>
+            {picked.image1.objectUrl && (
+              <Card className="overflow-hidden w-40 h-40 flex-shrink-0 animate-in fade-in slide-in-from-left-2">
+                <div className="relative w-full h-full bg-gray-100">
+                  {picked.image2.objectUrl ? (
+                    <img src={picked.image2.objectUrl} alt="图片2" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-gray-500">
+                      <ImagePlus className="size-5" />
+                      <div className="text-[10px]">图片2</div>
+                    </div>
+                  )}
+                  <div className="absolute top-1 right-1">
+                    <Button size="sm" variant="secondary" className="h-7 px-2 text-[10px]" onClick={() => handlePick('image2')}>
+                      {picked.image2.objectUrl ? '重选' : '选择'}
+                    </Button>
                   </div>
-                )}
-                <div className="absolute top-2 right-2">
-                  <Button size="sm" variant="secondary" onClick={() => handlePick('image2')}>
-                    {picked.image2.objectUrl ? '重选' : '选择'}
-                  </Button>
                 </div>
-              </div>
-            </Card>
+              </Card>
+            )}
           </div>
 
 
@@ -253,7 +257,7 @@ export function UploadPage() {
           </p>
           {pointsBalance < 1 && (
             <p className="text-xs text-center text-red-500">
-              积分不足，无法生成，请先登录并充值积分
+              积分不足，无法生成，请先在设置中兑换激活码或充值积分
             </p>
           )}
         </div>
