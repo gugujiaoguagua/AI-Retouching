@@ -68,10 +68,29 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
       return json({ error: 'missing-env', key: 'LICENSE_PRIVATE_KEY' }, { status: 500 });
     }
 
-    const secretKey = base64UrlToBytes(privateKeyB64);
-    if (secretKey.length !== 64) {
-      return json({ error: 'bad-env', key: 'LICENSE_PRIVATE_KEY', hint: '需要 64 字节的 Ed25519 secretKey（base64url）' }, { status: 500 });
+    const keyBytes = base64UrlToBytes(privateKeyB64);
+
+    // 兼容两种写法：
+    // - 64 字节：tweetnacl 的 sign.secretKey（推荐）
+    // - 32 字节：Ed25519 seed（会在此处派生为 64 字节 secretKey）
+    const secretKey =
+      keyBytes.length === 64
+        ? keyBytes
+        : keyBytes.length === 32
+          ? nacl.sign.keyPair.fromSeed(keyBytes).secretKey
+          : null;
+
+    if (!secretKey) {
+      return json(
+        {
+          error: 'bad-env',
+          key: 'LICENSE_PRIVATE_KEY',
+          hint: `需要 64 字节 secretKey 或 32 字节 seed（base64url）。当前解码长度=${keyBytes.length}`,
+        },
+        { status: 500 }
+      );
     }
+
 
     const body = (await context.request.json().catch(() => null)) as any;
     if (!body || typeof body !== 'object') {
