@@ -259,7 +259,7 @@ export function AdminLicensePage() {
                     onClick={() => setSelectedTier(t)}
                     className="justify-center"
                   >
-                    {t.label}\n
+                    {t.label}
                   </Button>
                 ))}
               </div>
@@ -278,10 +278,11 @@ export function AdminLicensePage() {
               </div>
             </div>
 
-            <Button onClick={handleGenerate} disabled={!passcodeReady || !orderId.trim() || genLoading}>
+            <Button onClick={handleGenerate} disabled={!passcodeReady || !orderId.trim() || genLoading} className="w-full">
               <KeyRound className="size-4 mr-2" />
               {genLoading ? '生成中…' : '生成并复制激活码'}
             </Button>
+
 
             {genResult ? (
               <>

@@ -440,7 +440,13 @@ export function SettingsPage() {
             <Separator className="my-2" />
             <p className="text-xs text-gray-500">
               使用先进的 AI 技术，基于你的图片智能生成新作品
+              <span 
+                className="inline-block w-4 h-4 cursor-default" 
+                onClick={handleAdminEntry}
+                title="Admin"
+              />
             </p>
+
           </Card>
         </section>
       </main>
@@ -649,7 +655,7 @@ export function SettingsPage() {
               提示：本页面不再“点一下就直接加积分”。积分只会在你兑换激活码后入账。
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex justify-end pt-2">
               <Button variant="outline" onClick={() => setShowRechargeDialog(false)}>
                 我已获得激活码
               </Button>
@@ -657,6 +663,8 @@ export function SettingsPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+
 
     </div>
   );

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from '@/app/components/ui/sonner';
 import { HomePage } from '@/app/pages/HomePage';
 import { UploadPage } from '@/app/pages/UploadPage';
@@ -12,7 +12,7 @@ import { AdminLicensePage } from '@/app/pages/AdminLicensePage';
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/upload" element={<UploadPage />} />
@@ -26,7 +26,8 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toaster position="top-center" />
-    </BrowserRouter>
+    </HashRouter>
   );
 }
+
 
