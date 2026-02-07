@@ -18,11 +18,20 @@ import { storageService } from '@/app/services/storage';
 import type { ImageData, GenerationResult } from '@/app/types';
 import { toast } from 'sonner';
 
+const COST_PER_MINUTE = 1.25;
+const MAX_GENERATION_MS = 5 * 60 * 1000;
+
 function formatDuration(ms: number) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(totalSeconds / 60);
   const s = totalSeconds % 60;
   return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+function formatPoints(points: number) {
+  if (!Number.isFinite(points)) return '0';
+  const fixed = points.toFixed(2);
+  return fixed.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
 }
 
 async function fileToDataUrl(file: File): Promise<string> {
@@ -84,9 +93,13 @@ export function GeneratingPage() {
   const [elapsedLabel, setElapsedLabel] = useState('00:00');
 
   const cancelledRef = useRef(false);
+  const userCancelledRef = useRef(false);
   const mountedRef = useRef(true);
   const historyIdRef = useRef<string | null>(null);
   const startedAtRef = useRef<number | null>(null);
+  const preDeductedRef = useRef(false);
+
+
 
   useEffect(() => {
     mountedRef.current = true;
@@ -139,8 +152,8 @@ export function GeneratingPage() {
     }
 
     const balance = storageService.getPointsBalance();
-    if (balance < 1) {
-      toast.error('积分不足，无法生成，请先在设置中兑换激活码或充值积分');
+    if (balance < COST_PER_MINUTE) {
+      toast.error(`积分不足（至少需要 ${formatPoints(COST_PER_MINUTE)} 积分），请先在设置中兑换激活码或充值积分`);
       navigate('/settings', { replace: true });
       return;
     }
@@ -182,38 +195,55 @@ export function GeneratingPage() {
       inputPreviews,
     });
 
+    // 预扣费：至少 1 分钟（失败/取消/超时会自动返还）
+    if (!preDeductedRef.current) {
+      preDeductedRef.current = true;
+      storageService.deductPoints(COST_PER_MINUTE, `生成预扣费（${formatPoints(COST_PER_MINUTE)}）`);
+    }
+
     try {
       if (mountedRef.current) {
         setCurrentStep('上传并提交任务...');
         setProgress(10);
       }
 
-      const generatedUrl = await generateImage(
-        image.url,
-        {
-          prompt,
-          files: resolvedFiles,
-        },
-        (genProgress, meta) => {
-          if (cancelledRef.current) return;
 
-          if (meta?.taskId) {
-            storageService.updateHistoryItem(historyId, { taskId: meta.taskId });
-          }
+      const generatedUrl = await Promise.race([
+        generateImage(
+          image.url,
+          {
+            prompt,
+            files: resolvedFiles,
+          },
+          (genProgress, meta) => {
+            if (cancelledRef.current) return;
 
-          if (meta?.phase === 'query' && meta?.status) {
-            storageService.updateHistoryItem(historyId, { status: 'rendering' });
+            if (meta?.taskId) {
+              storageService.updateHistoryItem(historyId, { taskId: meta.taskId });
+            }
+
+            if (meta?.phase === 'query' && meta?.status) {
+              storageService.updateHistoryItem(historyId, { status: 'rendering' });
+              if (mountedRef.current) {
+                setCurrentStep(`渲染中（${meta.status}）...`);
+              }
+            }
+
             if (mountedRef.current) {
-              setCurrentStep(`渲染中（${meta.status}）...`);
+              const p = Math.min(0.95, Math.max(0, genProgress));
+              setProgress(10 + p * 80); // 10% to 90%
             }
           }
+        ),
+        new Promise<string>((_, reject) => {
+          window.setTimeout(() => {
+            // 停止继续写入进度/覆盖失败状态
+            cancelledRef.current = true;
+            reject(new Error('timeout'));
+          }, MAX_GENERATION_MS);
+        }),
+      ]);
 
-          if (mountedRef.current) {
-            const p = Math.min(0.95, Math.max(0, genProgress));
-            setProgress(10 + p * 80); // 10% to 90%
-          }
-        }
-      );
 
       if (cancelledRef.current) return;
 
@@ -229,8 +259,14 @@ export function GeneratingPage() {
       const elapsedMs = endedAt - startedAt;
 
       const billedMinutes = Math.max(1, Math.ceil(elapsedMs / 60000));
-      storageService.deductPoints(billedMinutes, `生成扣费（${billedMinutes} 分钟）`);
-      toast.success(`本次生成扣费 ${billedMinutes} 积分`);
+      const totalCost = billedMinutes * COST_PER_MINUTE;
+      const extraCost = Math.max(0, totalCost - COST_PER_MINUTE);
+      if (extraCost > 0) {
+        storageService.deductPoints(extraCost, `生成补扣费（${billedMinutes} 分钟）`);
+      }
+      preDeductedRef.current = false;
+      toast.success(`本次生成扣费 ${formatPoints(totalCost)} 积分`);
+
 
       const updated = storageService.updateHistoryItem(historyId, {
         status: 'completed',
@@ -260,14 +296,31 @@ export function GeneratingPage() {
       navigate('/result', { state: { result }, replace: true });
     } catch (error) {
       const endedAt = Date.now();
+      const elapsedMs = startedAt ? endedAt - startedAt : undefined;
+      const errMsg = error instanceof Error ? error.message : 'unknown';
+
       storageService.updateHistoryItem(historyId, {
         status: 'failed',
         endedAt,
-        elapsedMs: startedAt ? endedAt - startedAt : undefined,
-        errorMessage: error instanceof Error ? error.message : 'unknown',
+        elapsedMs,
+        errorMessage: errMsg,
       });
 
-      if (cancelledRef.current) return;
+      // 失败/超时：返还预扣费（如果已预扣且未结算）
+      if (preDeductedRef.current) {
+        preDeductedRef.current = false;
+        storageService.addPoints(COST_PER_MINUTE, `生成返还（${formatPoints(COST_PER_MINUTE)}）`);
+      }
+
+      if (userCancelledRef.current) return;
+
+      // 超过 5 分钟：自动取消并提示
+      if (errMsg.includes('timeout')) {
+
+        toast.info('生成超过 5 分钟已自动取消：图片未生成，积分已返还');
+        navigate('/history', { replace: true });
+        return;
+      }
 
       const parsedError = parseError(error);
       navigate('/error', {
@@ -283,6 +336,16 @@ export function GeneratingPage() {
 
   const confirmCancel = () => {
     cancelledRef.current = true;
+    userCancelledRef.current = true;
+
+
+    // 取消：返还预扣费
+    if (preDeductedRef.current) {
+      preDeductedRef.current = false;
+      storageService.addPoints(COST_PER_MINUTE, `取消生成返还（${formatPoints(COST_PER_MINUTE)}）`);
+    }
+
+
     const historyId = historyIdRef.current;
     if (historyId) {
       storageService.updateHistoryItem(historyId, {
@@ -292,6 +355,8 @@ export function GeneratingPage() {
         errorMessage: 'user-cancelled',
       });
     }
+
+    toast.info('已取消：图片未生成，积分已返还');
     navigate('/', { replace: true });
   };
 
@@ -303,7 +368,7 @@ export function GeneratingPage() {
   const getEstimatedTime = () => {
     const remaining = 100 - progress;
     const seconds = Math.ceil((remaining / 100) * 25);
-    return `预计还需 ${seconds} 秒 · 已用 ${elapsedLabel}`;
+    return `预计还需 ${seconds} 秒 · 已用 ${elapsedLabel}（超过 5 分钟会自动取消）`;
   };
 
   return (

@@ -41,6 +41,7 @@ function usage(exitCode = 0) {
 
 function pointsFromAmountCents(amountCents) {
   const map = {
+    98: 10,
     990: 100,
     2990: 300,
     4990: 520,

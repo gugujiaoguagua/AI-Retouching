@@ -97,8 +97,8 @@ export function UploadPage() {
 
   const handleGenerate = () => {
     const balance = storageService.getPointsBalance();
-    if (balance < 1) {
-      toast.error('积分不足，无法生成，请先在设置中兑换激活码或充值积分');
+    if (balance < 1.25) {
+      toast.error('积分不足（至少需要 1.25 积分），请先在设置中兑换激活码或充值积分');
       return;
     }
 

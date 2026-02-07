@@ -121,7 +121,7 @@ export async function generateImage(
 
   // 2) poll query
   const startedAt = Date.now();
-  const timeoutMs = 3 * 60 * 1000;
+  const timeoutMs = 5 * 60 * 1000;
   const intervalMs = 1200;
 
   while (Date.now() - startedAt < timeoutMs) {

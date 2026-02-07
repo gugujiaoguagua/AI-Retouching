@@ -1,18 +1,11 @@
 import nacl from 'tweetnacl';
 
-const PREFIX_V1 = 'AIG1';
 const PREFIX_V2 = 'AIG2';
 
-type Env = Record<string, string | undefined>;
-
-type ActivationPayloadV1 = {
-  v: 1;
-  id: string;
-  deviceId: string;
-  points: number;
-  issuedAt: number;
-  expiresAt?: number;
-  note?: string;
+type Env = {
+  [key: string]: unknown;
+  LICENSE_PRIVATE_KEY?: string;
+  LICENSE_ADMIN_UI_PASSCODE?: string;
 };
 
 type ActivationPayloadV2 = {
@@ -35,18 +28,6 @@ function json(data: unknown, init?: ResponseInit) {
   });
 }
 
-function getBearerToken(req: Request) {
-  const auth = req.headers.get('authorization') || '';
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  return m?.[1]?.trim() || '';
-}
-
-function bytesToBase64Url(bytes: Uint8Array) {
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
 function base64UrlToBytes(input: string) {
   const normalized = input.replace(/-/g, '+').replace(/_/g, '/');
   const padLen = (4 - (normalized.length % 4)) % 4;
@@ -55,6 +36,12 @@ function base64UrlToBytes(input: string) {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+function bytesToBase64Url(bytes: Uint8Array) {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 function safeText(value: unknown, maxLen: number) {
@@ -80,28 +67,25 @@ function pointsFromAmountCents(amountCents: number): number | null {
   return map[amountCents] ?? null;
 }
 
+function verifyPasscode(req: Request, env: Env): boolean {
+  const expected = safeText(env.LICENSE_ADMIN_UI_PASSCODE, 256);
+  if (!expected) return false;
+  const got = safeText(req.headers.get('x-admin-passcode'), 256);
+  return Boolean(got) && got === expected;
+}
+
 export async function onRequestPost(context: { request: Request; env: Env }) {
   try {
-    const adminToken = (context.env.LICENSE_ADMIN_TOKEN || '').trim();
-    if (!adminToken) {
-      return json({ error: 'missing-env', key: 'LICENSE_ADMIN_TOKEN' }, { status: 500 });
+    if (!verifyPasscode(context.request, context.env)) {
+      return json({ ok: false, error: 'unauthorized' }, { status: 401 });
     }
 
-    const callerToken = getBearerToken(context.request);
-    if (!callerToken || callerToken !== adminToken) {
-      return json({ error: 'unauthorized' }, { status: 401 });
-    }
-
-    const privateKeyB64 = (context.env.LICENSE_PRIVATE_KEY || '').trim();
+    const privateKeyB64 = safeText(context.env.LICENSE_PRIVATE_KEY, 512);
     if (!privateKeyB64) {
-      return json({ error: 'missing-env', key: 'LICENSE_PRIVATE_KEY' }, { status: 500 });
+      return json({ ok: false, error: 'missing-env', key: 'LICENSE_PRIVATE_KEY' }, { status: 500 });
     }
 
     const keyBytes = base64UrlToBytes(privateKeyB64);
-
-    // 兼容两种写法：
-    // - 64 字节：tweetnacl 的 sign.secretKey（推荐）
-    // - 32 字节：Ed25519 seed（会在此处派生为 64 字节 secretKey）
     const secretKey =
       keyBytes.length === 64
         ? keyBytes
@@ -112,6 +96,7 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
     if (!secretKey) {
       return json(
         {
+          ok: false,
           error: 'bad-env',
           key: 'LICENSE_PRIVATE_KEY',
           hint: `需要 64 字节 secretKey 或 32 字节 seed（base64url）。当前解码长度=${keyBytes.length}`,
@@ -122,49 +107,16 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
 
     const body = (await context.request.json().catch(() => null)) as any;
     if (!body || typeof body !== 'object') {
-      return json({ error: 'bad-request', message: 'body 必须是 JSON' }, { status: 400 });
+      return json({ ok: false, error: 'bad-request', message: 'body 必须是 JSON' }, { status: 400 });
     }
 
     const now = Date.now();
-    const id = safeText(body.id, 64) || `lic-${now}-${Math.random().toString(16).slice(2)}`;
-    const note = safeText(body.note, 80);
-
-    // 兼容旧版：如果传了 deviceId，则生成 AIG1（v1）
-    const deviceId = safeText(body.deviceId, 128);
-    if (deviceId) {
-      const points = Number(body.points);
-      const expiresDays = body.expiresDays === undefined || body.expiresDays === null ? undefined : Number(body.expiresDays);
-
-      if (!Number.isFinite(points) || points <= 0) {
-        return json({ error: 'bad-request', message: 'points 必须为正数' }, { status: 400 });
-      }
-
-      if (expiresDays !== undefined && (!Number.isFinite(expiresDays) || expiresDays <= 0)) {
-        return json({ error: 'bad-request', message: 'expiresDays 必须为正数（天）' }, { status: 400 });
-      }
-
-      const payload: ActivationPayloadV1 = {
-        v: 1,
-        id,
-        deviceId,
-        points: Math.floor(points),
-        issuedAt: now,
-        expiresAt: expiresDays ? now + Math.floor(expiresDays * 24 * 60 * 60 * 1000) : undefined,
-        note: note || undefined,
-      };
-
-      // 删除 undefined 字段
-      if (payload.expiresAt === undefined) delete payload.expiresAt;
-      if (payload.note === undefined) delete payload.note;
-
-      const payloadBytes = new TextEncoder().encode(JSON.stringify(payload));
-      const sigBytes = nacl.sign.detached(payloadBytes, secretKey);
-      const code = `${PREFIX_V1}.${bytesToBase64Url(payloadBytes)}.${bytesToBase64Url(sigBytes)}`;
-
-      return json({ ok: true, code, payload });
+    const id = safeText(body.id, 64);
+    if (!id) {
+      return json({ ok: false, error: 'bad-request', message: 'id（订单号）不能为空' }, { status: 400 });
     }
 
-    // 新版：AIG2（v2）
+    const note = safeText(body.note, 80);
     const amountCents = safeInt(body.amountCents);
     const pointsFromBody = safeInt(body.points);
 
@@ -178,6 +130,7 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
     if (!points || points <= 0) {
       return json(
         {
+          ok: false,
           error: 'bad-request',
           message: '请传 points 或 amountCents（可按档位自动识别）',
           tiers: [
@@ -193,15 +146,7 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
     }
 
     const expiresHours = safeInt(body.expiresHours);
-    const expiresDays = safeInt(body.expiresDays);
-    const effectiveHours =
-      typeof expiresHours === 'number' && expiresHours > 0
-        ? expiresHours
-        : typeof expiresDays === 'number' && expiresDays > 0
-          ? expiresDays * 24
-          : 24;
-
-    const expiresAt = now + Math.floor(effectiveHours * 60 * 60 * 1000);
+    const effectiveHours = typeof expiresHours === 'number' && expiresHours > 0 ? expiresHours : 24;
 
     const payload: ActivationPayloadV2 = {
       v: 2,
@@ -209,11 +154,10 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
       amountCents: typeof amountCents === 'number' && amountCents > 0 ? amountCents : undefined,
       points,
       issuedAt: now,
-      expiresAt,
+      expiresAt: now + Math.floor(effectiveHours * 60 * 60 * 1000),
       note: note || undefined,
     };
 
-    // 删除 undefined 字段
     if (payload.amountCents === undefined) delete payload.amountCents;
     if (payload.note === undefined) delete payload.note;
 
@@ -224,7 +168,6 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
 
     return json({ ok: true, code, payload });
   } catch {
-    return json({ error: 'internal-error' }, { status: 500 });
+    return json({ ok: false, error: 'internal-error' }, { status: 500 });
   }
 }
-

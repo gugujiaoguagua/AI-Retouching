@@ -8,6 +8,7 @@ import { ResultPage } from '@/app/pages/ResultPage';
 import { ErrorPage } from '@/app/pages/ErrorPage';
 import { HistoryPage } from '@/app/pages/HistoryPage';
 import { SettingsPage } from '@/app/pages/SettingsPage';
+import { AdminLicensePage } from '@/app/pages/AdminLicensePage';
 
 export default function App() {
   return (
@@ -21,9 +22,11 @@ export default function App() {
         <Route path="/error" element={<ErrorPage />} />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/admin/license" element={<AdminLicensePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toaster position="top-center" />
     </BrowserRouter>
   );
 }
+
