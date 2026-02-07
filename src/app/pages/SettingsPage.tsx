@@ -97,8 +97,18 @@ export function SettingsPage() {
     await copyText(accountId, '账号ID已复制');
   };
 
+  const handleAdminEntry = () => {
+    const secret = '9X#kP2$mQ5@Ln!8zR_vW4 H7&bL@3sK9!dP2#xM5$qN Z1!wR4*yC8(uI3^oP0)tL';
+    const input = prompt('请输入进入指令：');
+    if (input === secret) {
+      navigate('/admin/license');
+    } else if (input !== null) {
+      toast.error('指令错误');
+    }
+  };
 
   const handleRedeemActivationCode = async () => {
+
     if (redeemLoading) return;
     setRedeemLoading(true);
     try {
@@ -440,12 +450,15 @@ export function SettingsPage() {
             <Separator className="my-2" />
             <p className="text-xs text-gray-500">
               使用先进的 AI 技术，基于你的图片智能生成新作品
-              <span 
-                className="inline-block w-4 h-4 cursor-default" 
+              <button
+                type="button"
                 onClick={handleAdminEntry}
+                aria-label="admin-entry"
+                className="ml-1 inline-block w-6 h-6 align-middle opacity-0"
                 title="Admin"
               />
             </p>
+
 
           </Card>
         </section>
