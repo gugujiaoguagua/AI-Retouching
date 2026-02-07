@@ -151,7 +151,13 @@ export function HistoryPage() {
                         {isCompleted && (
                           <span className="px-2 py-1 text-xs rounded bg-green-600 text-white">已完成</span>
                         )}
+                        {item.resolution && (
+                          <span className="px-2 py-1 text-xs rounded bg-black/60 text-white">
+                            {item.resolution.toUpperCase()}
+                          </span>
+                        )}
                       </div>
+
 
                       {elapsed && (
                         <div className="absolute bottom-2 right-2">

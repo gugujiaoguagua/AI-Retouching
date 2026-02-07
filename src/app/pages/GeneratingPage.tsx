@@ -15,11 +15,16 @@ import {
 } from '@/app/components/ui/alert-dialog';
 import { generateImage, parseError } from '@/app/services/ai';
 import { storageService } from '@/app/services/storage';
-import type { ImageData, GenerationResult } from '@/app/types';
+import type { ImageData, GenerationResult, OutputResolution } from '@/app/types';
+
 import { toast } from 'sonner';
 
-const COST_PER_GENERATION = 10;
+const COST_BY_RESOLUTION: Record<OutputResolution, number> = {
+  '2k': 10,
+  '4k': 30,
+};
 const MAX_GENERATION_MS = 5 * 60 * 1000;
+
 
 
 function formatDuration(ms: number) {
@@ -83,9 +88,14 @@ export function GeneratingPage() {
   const location = useLocation();
   const image = location.state?.image as ImageData | undefined;
   const prompt = location.state?.prompt as string | undefined;
+  const resolutionRaw = location.state?.resolution as OutputResolution | undefined;
+  const resolution: OutputResolution = resolutionRaw === '4k' ? '4k' : '2k';
+  const costPoints = COST_BY_RESOLUTION[resolution];
+
   const file = location.state?.file as File | undefined;
   const batchImageFiles = location.state?.batchImageFiles as File[] | undefined;
   const batchImageSlots = location.state?.batchImageSlots as Array<File | null> | undefined;
+
 
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState('准备中...');
@@ -148,16 +158,18 @@ export function GeneratingPage() {
     const baseFile = slots[0] ?? null;
     if (!baseFile) {
       toast.error('请先选择至少 1 张图片');
-      navigate('/upload', { state: { prompt }, replace: true });
+      navigate('/upload', { state: { prompt, resolution }, replace: true });
       return;
+
     }
 
     const balance = storageService.getPointsBalance();
-    if (balance < COST_PER_GENERATION) {
-      toast.error(`积分不足（至少需要 ${formatPoints(COST_PER_GENERATION)} 积分），请先在设置中兑换激活码或充值积分`);
+    if (balance < costPoints) {
+      toast.error(`积分不足（至少需要 ${formatPoints(costPoints)} 积分），请先在设置中兑换激活码或充值积分`);
       navigate('/settings', { replace: true });
       return;
     }
+
 
 
     // 自动补齐白底图，保证后端能按 3 节点注入
@@ -195,13 +207,16 @@ export function GeneratingPage() {
       status: 'rendering',
       startedAt,
       inputPreviews,
+      resolution,
+      costPoints,
     });
 
-    // 扣费：每次生成固定扣费（失败/取消/超时会自动返还）
+    // 扣费：按分辨率扣费（失败/取消/超时会自动返还）
     if (!preDeductedRef.current) {
       preDeductedRef.current = true;
-      storageService.deductPoints(COST_PER_GENERATION, `生成扣费（${formatPoints(COST_PER_GENERATION)}）`);
+      storageService.deductPoints(costPoints, `生成扣费（${resolution.toUpperCase()} / ${formatPoints(costPoints)}）`);
     }
+
 
 
     try {
@@ -217,8 +232,10 @@ export function GeneratingPage() {
           {
             prompt,
             files: resolvedFiles,
+            resolution,
           },
           (genProgress, meta) => {
+
             if (cancelledRef.current) return;
 
             if (meta?.taskId) {
@@ -262,16 +279,20 @@ export function GeneratingPage() {
       const elapsedMs = endedAt - startedAt;
 
       preDeductedRef.current = false;
-      toast.success(`本次生成扣费 ${formatPoints(COST_PER_GENERATION)} 积分`);
+      toast.success(`本次生成扣费 ${resolution.toUpperCase()} / ${formatPoints(costPoints)} 积分`);
 
 
 
-      const updated = storageService.updateHistoryItem(historyId, {
-        status: 'completed',
-        generatedUrl,
-        endedAt,
-        elapsedMs,
-      });
+
+      const updated =         storageService.updateHistoryItem(historyId, {
+          status: 'completed',
+          generatedUrl,
+          endedAt,
+          elapsedMs,
+          resolution,
+          costPoints,
+        });
+
 
       if (mountedRef.current) {
         setProgress(100);
@@ -289,7 +310,10 @@ export function GeneratingPage() {
         endedAt,
         elapsedMs,
         inputPreviews,
+        resolution,
+        costPoints,
       };
+
 
       navigate('/result', { state: { result }, replace: true });
     } catch (error) {
@@ -307,9 +331,9 @@ export function GeneratingPage() {
       // 失败/超时：返还预扣费（如果已预扣且未结算）
       if (preDeductedRef.current) {
         preDeductedRef.current = false;
-        storageService.addPoints(COST_PER_GENERATION, `生成返还（${formatPoints(COST_PER_GENERATION)}）`);
-
+        storageService.addPoints(costPoints, `生成返还（${resolution.toUpperCase()} / ${formatPoints(costPoints)}）`);
       }
+
 
       if (userCancelledRef.current) return;
 
@@ -323,9 +347,10 @@ export function GeneratingPage() {
 
       const parsedError = parseError(error);
       navigate('/error', {
-        state: { error: parsedError, image, prompt, batchImageFiles, batchImageSlots },
+        state: { error: parsedError, image, prompt, resolution, batchImageFiles, batchImageSlots },
         replace: true,
       });
+
     }
   };
 
@@ -341,9 +366,9 @@ export function GeneratingPage() {
     // 取消：返还预扣费
     if (preDeductedRef.current) {
       preDeductedRef.current = false;
-      storageService.addPoints(COST_PER_GENERATION, `取消生成返还（${formatPoints(COST_PER_GENERATION)}）`);
-
+      storageService.addPoints(costPoints, `取消生成返还（${resolution.toUpperCase()} / ${formatPoints(costPoints)}）`);
     }
+
 
 
     const historyId = historyIdRef.current;

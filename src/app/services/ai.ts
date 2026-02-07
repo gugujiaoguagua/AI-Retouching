@@ -55,6 +55,7 @@ export async function generateImage(
     prompt?: string;
     file?: File;
     files?: File[];
+    resolution?: '2k' | '4k';
   },
   onProgress?: (
     progress: number,
@@ -82,6 +83,8 @@ export async function generateImage(
 
   const prompt = options?.prompt?.trim() ?? '';
   const files = (options?.files?.filter(Boolean) ?? []) as File[];
+  const resolution = options?.resolution;
+
 
   // B 模式：必须先上传文件再 run（前端只把 File 交给同域 Functions）
   if (!files.length) {
@@ -96,6 +99,8 @@ export async function generateImage(
     runForm.append('file', f, f.name);
   }
   if (prompt) runForm.set('prompt', prompt);
+  if (resolution) runForm.set('resolution', resolution);
+
 
   const runResp = await fetch('/api/runninghub/run', {
     method: 'POST',

@@ -10,14 +10,17 @@ export function ErrorPage() {
   const error = location.state?.error as GenerationError | undefined;
   const image = location.state?.image as ImageData | undefined;
   const prompt = location.state?.prompt as string | undefined;
+  const resolution = location.state?.resolution as '2k' | '4k' | undefined;
   const batchImageFiles = location.state?.batchImageFiles as File[] | undefined;
   const batchImageSlots = location.state?.batchImageSlots as Array<File | null> | undefined;
 
+
   const handleRetry = () => {
     if (image) {
-      navigate('/generating', { state: { image, prompt, batchImageFiles, batchImageSlots } });
+      navigate('/generating', { state: { image, prompt, resolution, batchImageFiles, batchImageSlots } });
       return;
     }
+
 
 
     navigate('/');

@@ -177,7 +177,13 @@ export function HistoryList({ onViewResult }: HistoryListProps) {
                             {result.status === 'failed' && (
                               <span className="absolute top-1 left-1 px-1.5 py-0.5 text-[10px] rounded bg-red-600 text-white">失败</span>
                             )}
+                            {result.resolution && (
+                              <span className="absolute bottom-1 right-1 px-1.5 py-0.5 text-[10px] rounded bg-black/60 text-white">
+                                {result.resolution.toUpperCase()}
+                              </span>
+                            )}
                           </div>
+
                           <div className="p-3 flex-1 min-w-0 flex flex-col justify-between">
                             <p className="text-sm font-medium line-clamp-2">{result.prompt || result.analysis?.summary || '渲染任务'}</p>
                             <div className="flex items-center justify-between text-xs text-gray-500">

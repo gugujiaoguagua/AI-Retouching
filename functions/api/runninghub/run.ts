@@ -33,6 +33,23 @@ export async function onRequestPost(context: { request: Request; env: Record<str
       | 'file'
       | 'text';
 
+    // Resolution injection (client -> node params)
+    const resolutionNodeIdRaw = (context.env['RUNNINGHUB_RESOLUTION_NODE_ID'] ?? '').trim();
+    const resolutionFieldName = (context.env['RUNNINGHUB_RESOLUTION_PARAM_KEY'] ?? 'resolution').trim();
+    const resolutionValueMapRaw = (context.env['RUNNINGHUB_RESOLUTION_VALUE_MAP'] ?? '').trim();
+    let resolutionValueMap: Record<string, string> | null = null;
+    if (resolutionValueMapRaw) {
+      try {
+        const parsed = JSON.parse(resolutionValueMapRaw) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          resolutionValueMap = parsed as Record<string, string>;
+        }
+      } catch {
+        resolutionValueMap = null;
+      }
+    }
+
+
     const contentType = context.request.headers.get('content-type') || '';
     if (!contentType.includes('multipart/form-data')) {
       return json({ error: 'unsupported-content-type' }, { status: 415 });
@@ -49,6 +66,8 @@ export async function onRequestPost(context: { request: Request; env: Record<str
     }
 
     const prompt = typeof form.get('prompt') === 'string' ? String(form.get('prompt')).trim() : '';
+    const resolutionFromClient = typeof form.get('resolution') === 'string' ? String(form.get('resolution')).trim() : '';
+
 
     // Optional knobs from client
     const workflowType = typeof form.get('workflowType') === 'string' ? String(form.get('workflowType')).trim() : undefined;
@@ -266,11 +285,37 @@ export async function onRequestPost(context: { request: Request; env: Record<str
       });
     }
 
+    // Resolution injection
+    if (resolutionFromClient) {
+      const normalized = resolutionFromClient.toLowerCase();
+      if (normalized !== '2k' && normalized !== '4k') {
+        return json({ error: 'invalid-resolution', allowed: ['2k', '4k'] }, { status: 400 });
+      }
+
+      const mapped = (resolutionValueMap && typeof resolutionValueMap[normalized] === 'string' && resolutionValueMap[normalized].trim())
+        ? resolutionValueMap[normalized].trim()
+        : normalized;
+
+      const parsedResolutionNodeId = resolutionNodeIdRaw ? Number(resolutionNodeIdRaw) : Number.NaN;
+      const effectiveResolutionNodeId = Number.isFinite(parsedResolutionNodeId) && parsedResolutionNodeId > 0
+        ? parsedResolutionNodeId
+        : effectivePromptNodeId;
+
+      if (resolutionFieldName) {
+        nodeInputs.push({
+          nodeId: effectiveResolutionNodeId,
+          fieldName: resolutionFieldName,
+          fieldValue: mapped,
+          fieldType: 'text',
+        });
+      }
+    }
 
     const basePayload: Record<string, unknown> = {
       // workflowId 有的入口走 path（.../workflow/:id），有的入口走 body
       // 这里先不放，后面会按候选入口自动补齐
     };
+
 
 
     if (workflowType) basePayload.workflowType = workflowType;

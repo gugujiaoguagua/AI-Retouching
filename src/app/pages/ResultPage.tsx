@@ -27,11 +27,60 @@ export function ResultPage() {
   const [feedback, setFeedback] = useState<'good' | 'bad' | null>(null);
   const [showRegenerateDialog, setShowRegenerateDialog] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [preparingUpscale, setPreparingUpscale] = useState(false);
+
 
   if (!result || !result.generatedUrl) {
     navigate('/');
     return null;
   }
+
+  const effectiveResolution = result.resolution ?? '2k';
+  const canUpscale = effectiveResolution === '2k';
+
+  const buildUpscalePrompt = () => {
+    const prompt = '保持图片结构、构图、色彩与风格不变，将图片超清放大到 4K，增强细节与清晰度，减少噪点与锯齿，避免重绘、变形或新增元素。';
+    return prompt.slice(0, 200);
+  };
+
+  const handleUpscale = async () => {
+    if (preparingUpscale) return;
+    if (!canUpscale) return;
+
+    setPreparingUpscale(true);
+    try {
+      const srcUrl = result.taskId
+        ? `/api/runninghub/image?taskId=${encodeURIComponent(result.taskId)}&index=0`
+        : result.generatedUrl;
+
+      const resp = await fetch(srcUrl);
+      if (!resp.ok) throw new Error('fetch-upscale-source-failed');
+
+      const blob = await resp.blob();
+      const ext = blob.type === 'image/webp' ? 'webp' : blob.type === 'image/png' ? 'png' : 'jpg';
+      const file = new File([blob], `upscale-source-${result.id}.${ext}`, { type: blob.type || 'image/jpeg' });
+
+      toast.info('已为你准备好 4K 超清参数，请确认后点击生成');
+      navigate('/upload', {
+        state: {
+          prompt: buildUpscalePrompt(),
+          resolution: '4k',
+          // 填满 3 个槽位，确保后端按 3 个 Load Image 节点注入
+          prefillFiles: [file, file, file],
+        },
+      });
+    } catch {
+      toast.error('超清准备失败：无法读取结果图片，请先保存图片后再手动上传');
+      navigate('/upload', {
+        state: {
+          prompt: buildUpscalePrompt(),
+          resolution: '4k',
+        },
+      });
+    } finally {
+      setPreparingUpscale(false);
+    }
+  };
 
   const handleDownload = async () => {
     try {
@@ -257,6 +306,16 @@ export function ResultPage() {
       {/* Fixed Bottom Actions */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4">
         <div className="max-w-4xl mx-auto space-y-3">
+          {canUpscale && (
+            <Button
+              onClick={handleUpscale}
+              disabled={!imageLoaded || imageError || preparingUpscale}
+              className="w-full"
+            >
+              {preparingUpscale ? '准备中…' : '超清一下（4K / 30 积分）'}
+            </Button>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <Button
               onClick={handleDownload}
@@ -296,6 +355,7 @@ export function ResultPage() {
           </div>
         </div>
       </div>
+
 
       {/* Regenerate Confirmation Dialog */}
       <AlertDialog open={showRegenerateDialog} onOpenChange={setShowRegenerateDialog}>

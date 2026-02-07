@@ -5,8 +5,9 @@ import { Button } from '@/app/components/ui/button';
 import { Card } from '@/app/components/ui/card';
 import { Textarea } from '@/app/components/ui/textarea';
 import { storageService } from '@/app/services/storage';
-import type { ImageData } from '@/app/types';
+import type { ImageData, OutputResolution } from '@/app/types';
 import { toast } from 'sonner';
+
 
 type PickedImage = {
   file: File | null;
@@ -30,19 +31,19 @@ function validateImageFile(file: File) {
 export function UploadPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const initialPrompt = (location.state?.prompt as string | undefined) ?? '';
-
 
   const baseInputRef = useRef<HTMLInputElement>(null);
   const image1InputRef = useRef<HTMLInputElement>(null);
   const image2InputRef = useRef<HTMLInputElement>(null);
 
-  const [prompt, setPrompt] = useState(initialPrompt);
+  const [prompt, setPrompt] = useState('');
+  const [resolution, setResolution] = useState<OutputResolution>('2k');
+
   const pointsBalance = storageService.getPointsBalance();
-
-
+  const costPoints = resolution === '4k' ? 30 : 10;
 
   const [picked, setPicked] = useState<{ base: PickedImage; image1: PickedImage; image2: PickedImage }>({
+
     base: { file: null, objectUrl: null },
     image1: { file: null, objectUrl: null },
     image2: { file: null, objectUrl: null },
@@ -51,8 +52,45 @@ export function UploadPage() {
   const pickedRef = useRef(picked);
 
   useEffect(() => {
+    const st = (location.state ?? {}) as any;
+    const nextPrompt = typeof st.prompt === 'string' ? st.prompt : '';
+    const nextResolution: OutputResolution = st.resolution === '4k' ? '4k' : '2k';
+
+    setPrompt(nextPrompt);
+    setResolution(nextResolution);
+
+    const prefillFiles = Array.isArray(st.prefillFiles) ? (st.prefillFiles as Array<File | null>) : null;
+    if (prefillFiles && prefillFiles.length) {
+      const baseFile = prefillFiles[0] ?? null;
+      const file1 = prefillFiles[1] ?? null;
+      const file2 = prefillFiles[2] ?? null;
+
+      setPicked(prev => {
+        // revoke previous urls
+        for (const k of Object.keys(prev) as Array<keyof typeof prev>) {
+          const u = prev[k].objectUrl;
+          if (u) URL.revokeObjectURL(u);
+        }
+
+        const mk = (file: File | null): PickedImage => ({
+          file,
+          objectUrl: file ? URL.createObjectURL(file) : null,
+        });
+
+        return {
+          base: mk(baseFile),
+          image1: mk(file1),
+          image2: mk(file2),
+        };
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
+
+  useEffect(() => {
     pickedRef.current = picked;
   }, [picked]);
+
 
   useEffect(() => {
     return () => {
@@ -97,11 +135,10 @@ export function UploadPage() {
 
   const handleGenerate = () => {
     const balance = storageService.getPointsBalance();
-    if (balance < 10) {
-      toast.error('积分不足（至少需要 10 积分），请先在设置中兑换激活码或充值积分');
+    if (balance < costPoints) {
+      toast.error(`积分不足（至少需要 ${costPoints} 积分），请先在设置中兑换激活码或充值积分`);
       return;
     }
-
 
     if (!picked.base.file) {
       toast.error('请先选择图片');
@@ -113,7 +150,6 @@ export function UploadPage() {
       toast.error('请输入文字描述');
       return;
     }
-
 
     const baseUrl = picked.base.objectUrl ?? URL.createObjectURL(picked.base.file);
     const nextImage: ImageData = {
@@ -127,6 +163,7 @@ export function UploadPage() {
       state: {
         image: nextImage,
         prompt: trimmedPrompt,
+        resolution,
         batchImageSlots: [picked.base.file, picked.image1.file, picked.image2.file],
       },
     });
@@ -233,7 +270,38 @@ export function UploadPage() {
             className="min-h-28"
           />
         </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium text-gray-700">分辨率</h2>
+            <div className="text-xs text-gray-500">{resolution.toUpperCase()} · {costPoints} 积分/次</div>
+          </div>
+          <Card className="p-3">
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={resolution === '2k' ? 'default' : 'outline'}
+                className="flex-1"
+                onClick={() => setResolution('2k')}
+              >
+                2K（10 积分）
+              </Button>
+              <Button
+                type="button"
+                variant={resolution === '4k' ? 'default' : 'outline'}
+                className="flex-1"
+                onClick={() => setResolution('4k')}
+              >
+                4K（30 积分）
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-gray-500">
+              2K 生成后可在结果页点击“超清一下”升级到 4K（不会自动生成，需你手动点击生成）。
+            </p>
+          </Card>
+        </div>
       </main>
+
 
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4">
         <div className="max-w-3xl mx-auto space-y-3">
@@ -248,8 +316,7 @@ export function UploadPage() {
             <Button
               className="flex-1"
               onClick={handleGenerate}
-              disabled={!picked.base.file || !prompt.trim() || pointsBalance < 10}
-
+              disabled={!picked.base.file || !prompt.trim() || pointsBalance < costPoints}
             >
               生成
             </Button>
@@ -257,10 +324,9 @@ export function UploadPage() {
           <p className="text-xs text-center text-gray-500">
             至少上传 1 张图片 · 不足会自动补白底图
           </p>
-          {pointsBalance < 10 && (
-
+          {pointsBalance < costPoints && (
             <p className="text-xs text-center text-red-500">
-              积分不足，无法生成，请先在设置中兑换激活码或充值积分
+              积分不足（需要 {costPoints} 积分），无法生成，请先在设置中兑换激活码或充值积分
             </p>
           )}
         </div>

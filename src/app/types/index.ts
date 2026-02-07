@@ -12,6 +12,8 @@ export interface AnalysisResult {
   confidence: number;
 }
 
+export type OutputResolution = '2k' | '4k';
+
 export interface GenerationResult {
   id: string;
   originalImage: ImageData;
@@ -28,7 +30,12 @@ export interface GenerationResult {
   elapsedMs?: number;
   inputPreviews?: string[];
   errorMessage?: string;
+
+  // 生成参数（用于结果页/历史记录展示与“超清一下”）
+  resolution?: OutputResolution;
+  costPoints?: number;
 }
+
 
 export type GenerationStatus = 
   | 'idle'
