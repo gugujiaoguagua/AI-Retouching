@@ -169,12 +169,12 @@ export function SettingsPage() {
   };
 
   const POINTS_PACKAGES = [
-    { priceText: '0.98', points: 10 },
     { priceText: '9.9', points: 100 },
     { priceText: '29.9', points: 300 },
     { priceText: '49.9', points: 520 },
     { priceText: '99', points: 1088 },
   ] as const;
+
 
   const buildPurchaseMessage = (pkg: { priceText: string; points: number }) => {
     return `购买档位：${pkg.priceText} 元 = ${pkg.points} 积分`;
@@ -343,11 +343,12 @@ export function SettingsPage() {
 
             <div className="text-xs text-gray-600">
               <span className="font-medium">计费规则：</span>
-              生成按耗时计费，1 分钟 = 1.25 积分，按分钟向上取整计费（例如 1-60 秒收 1.25；61-120 秒收 2.5）。
+              生成按次扣费：每生成 1 次扣 10 积分；生成失败/取消不扣费。
               <span className="ml-1">购买档位：</span>
-              0.98 元 = 10 积分，9.9 元 = 100 积分，29.9 元 = 300 积分，49.9 元 = 520 积分，99 元 = 1088 积分。
+              9.9 元 = 100 积分，29.9 元 = 300 积分，49.9 元 = 520 积分，99 元 = 1088 积分。
               <span className="ml-1">购买后客服发放激活码，回到上方“激活码”兑换入账。</span>
             </div>
+
 
             <Button
               variant="ghost"
@@ -590,7 +591,8 @@ export function SettingsPage() {
             <section>
               <h3 className="font-semibold mb-2">积分是什么？</h3>
               <p className="text-gray-600">
-                积分用于兑换功能或参与活动（当前为本地演示版，仅保存在本机）。生成按耗时计费：1 分钟 = 1.25 积分，按分钟向上取整（例如 1-60 秒收 1.25；61-120 秒收 2.5）。充值档位：0.98 元 = 10 积分，9.9 元 = 100 积分，29.9 元 = 300 积分，49.9 元 = 520 积分，99 元 = 1088 积分。你可以在“设置与帮助”的积分模块每日签到，并查看明细与充值。
+                积分用于兑换功能或参与活动（当前为本地演示版，仅保存在本机）。生成按次扣费：每生成 1 次扣 10 积分；生成失败/取消不扣费。充值档位：9.9 元 = 100 积分，29.9 元 = 300 积分，49.9 元 = 520 积分，99 元 = 1088 积分。你可以在“设置与帮助”的积分模块每日签到，并查看明细与充值。
+
               </p>
             </section>
           </div>

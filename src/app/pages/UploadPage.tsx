@@ -97,10 +97,11 @@ export function UploadPage() {
 
   const handleGenerate = () => {
     const balance = storageService.getPointsBalance();
-    if (balance < 1.25) {
-      toast.error('积分不足（至少需要 1.25 积分），请先在设置中兑换激活码或充值积分');
+    if (balance < 10) {
+      toast.error('积分不足（至少需要 10 积分），请先在设置中兑换激活码或充值积分');
       return;
     }
+
 
     if (!picked.base.file) {
       toast.error('请先选择图片');
@@ -247,7 +248,8 @@ export function UploadPage() {
             <Button
               className="flex-1"
               onClick={handleGenerate}
-              disabled={!picked.base.file || !prompt.trim() || pointsBalance < 1}
+              disabled={!picked.base.file || !prompt.trim() || pointsBalance < 10}
+
             >
               生成
             </Button>
@@ -255,7 +257,8 @@ export function UploadPage() {
           <p className="text-xs text-center text-gray-500">
             至少上传 1 张图片 · 不足会自动补白底图
           </p>
-          {pointsBalance < 1 && (
+          {pointsBalance < 10 && (
+
             <p className="text-xs text-center text-red-500">
               积分不足，无法生成，请先在设置中兑换激活码或充值积分
             </p>

@@ -18,8 +18,9 @@ import { storageService } from '@/app/services/storage';
 import type { ImageData, GenerationResult } from '@/app/types';
 import { toast } from 'sonner';
 
-const COST_PER_MINUTE = 1.25;
+const COST_PER_GENERATION = 10;
 const MAX_GENERATION_MS = 5 * 60 * 1000;
+
 
 function formatDuration(ms: number) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -152,11 +153,12 @@ export function GeneratingPage() {
     }
 
     const balance = storageService.getPointsBalance();
-    if (balance < COST_PER_MINUTE) {
-      toast.error(`积分不足（至少需要 ${formatPoints(COST_PER_MINUTE)} 积分），请先在设置中兑换激活码或充值积分`);
+    if (balance < COST_PER_GENERATION) {
+      toast.error(`积分不足（至少需要 ${formatPoints(COST_PER_GENERATION)} 积分），请先在设置中兑换激活码或充值积分`);
       navigate('/settings', { replace: true });
       return;
     }
+
 
     // 自动补齐白底图，保证后端能按 3 节点注入
     const resolvedFiles: File[] = [baseFile];
@@ -195,11 +197,12 @@ export function GeneratingPage() {
       inputPreviews,
     });
 
-    // 预扣费：至少 1 分钟（失败/取消/超时会自动返还）
+    // 扣费：每次生成固定扣费（失败/取消/超时会自动返还）
     if (!preDeductedRef.current) {
       preDeductedRef.current = true;
-      storageService.deductPoints(COST_PER_MINUTE, `生成预扣费（${formatPoints(COST_PER_MINUTE)}）`);
+      storageService.deductPoints(COST_PER_GENERATION, `生成扣费（${formatPoints(COST_PER_GENERATION)}）`);
     }
+
 
     try {
       if (mountedRef.current) {
@@ -258,14 +261,9 @@ export function GeneratingPage() {
       const endedAt = Date.now();
       const elapsedMs = endedAt - startedAt;
 
-      const billedMinutes = Math.max(1, Math.ceil(elapsedMs / 60000));
-      const totalCost = billedMinutes * COST_PER_MINUTE;
-      const extraCost = Math.max(0, totalCost - COST_PER_MINUTE);
-      if (extraCost > 0) {
-        storageService.deductPoints(extraCost, `生成补扣费（${billedMinutes} 分钟）`);
-      }
       preDeductedRef.current = false;
-      toast.success(`本次生成扣费 ${formatPoints(totalCost)} 积分`);
+      toast.success(`本次生成扣费 ${formatPoints(COST_PER_GENERATION)} 积分`);
+
 
 
       const updated = storageService.updateHistoryItem(historyId, {
@@ -309,7 +307,8 @@ export function GeneratingPage() {
       // 失败/超时：返还预扣费（如果已预扣且未结算）
       if (preDeductedRef.current) {
         preDeductedRef.current = false;
-        storageService.addPoints(COST_PER_MINUTE, `生成返还（${formatPoints(COST_PER_MINUTE)}）`);
+        storageService.addPoints(COST_PER_GENERATION, `生成返还（${formatPoints(COST_PER_GENERATION)}）`);
+
       }
 
       if (userCancelledRef.current) return;
@@ -342,7 +341,8 @@ export function GeneratingPage() {
     // 取消：返还预扣费
     if (preDeductedRef.current) {
       preDeductedRef.current = false;
-      storageService.addPoints(COST_PER_MINUTE, `取消生成返还（${formatPoints(COST_PER_MINUTE)}）`);
+      storageService.addPoints(COST_PER_GENERATION, `取消生成返还（${formatPoints(COST_PER_GENERATION)}）`);
+
     }
 
 

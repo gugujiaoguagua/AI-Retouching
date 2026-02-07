@@ -5,19 +5,32 @@ import { Button } from '@/app/components/ui/button';
 import { Card } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
 import { Alert, AlertDescription } from '@/app/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/app/components/ui/alert-dialog';
 import { Separator } from '@/app/components/ui/separator';
 import { toast } from 'sonner';
+
 
 const PASSCODE_STORAGE_KEY = 'ai-generator-admin-passcode';
 
 type Tier = { label: string; amountCents: number; points: number };
-const TIERS: Tier[] = [
-  { label: '0.98 元', amountCents: 98, points: 10 },
+const PRESET_TIERS: Tier[] = [
   { label: '9.9 元', amountCents: 990, points: 100 },
   { label: '29.9 元', amountCents: 2990, points: 300 },
   { label: '49.9 元', amountCents: 4990, points: 520 },
   { label: '99 元', amountCents: 9900, points: 1088 },
 ];
+
+const CUSTOM_POINTS_PER_YUAN = 10;
+
 
 function fmtTime(ms: number) {
   if (!Number.isFinite(ms) || ms <= 0) return '-';
@@ -26,6 +39,21 @@ function fmtTime(ms: number) {
   } catch {
     return String(ms);
   }
+}
+
+function parseYuanToCents(raw: string, maxYuan: number): number | null {
+  const s = raw.trim();
+  if (!s) return null;
+  if (!/^\d+(?:\.\d{0,2})?$/.test(s)) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n > maxYuan) return null;
+  return Math.round(n * 100);
+}
+
+function formatYuanFromCents(amountCents: number) {
+  const yuan = amountCents / 100;
+  return Number.isInteger(yuan) ? String(yuan) : yuan.toFixed(2).replace(/0$/, '').replace(/\.0$/, '');
 }
 
 export function AdminLicensePage() {
@@ -40,12 +68,43 @@ export function AdminLicensePage() {
   });
 
   const [orderId, setOrderId] = useState('');
-  const [selectedTier, setSelectedTier] = useState<Tier>(TIERS[1]);
+  const [tierMode, setTierMode] = useState<'preset' | 'custom'>('preset');
+  const [selectedPresetCents, setSelectedPresetCents] = useState<number>(PRESET_TIERS[0].amountCents);
+  const [customAmount, setCustomAmount] = useState('');
   const [expiresHours, setExpiresHours] = useState('24');
   const [note, setNote] = useState('xhs');
 
+  const selectedTier = useMemo<Tier | null>(() => {
+    if (tierMode === 'preset') {
+      return PRESET_TIERS.find((t) => t.amountCents === selectedPresetCents) ?? PRESET_TIERS[0];
+    }
+
+    const amountCents = parseYuanToCents(customAmount, 5000);
+    if (!amountCents || amountCents <= 0) return null;
+
+    const points = Math.max(1, Math.round((amountCents / 100) * CUSTOM_POINTS_PER_YUAN));
+
+    return {
+      label: `${formatYuanFromCents(amountCents)} 元`,
+      amountCents,
+      points,
+    };
+  }, [tierMode, selectedPresetCents, customAmount]);
+
+  const customTierError = useMemo(() => {
+    if (tierMode !== 'custom') return null;
+    const amountCents = parseYuanToCents(customAmount, 5000);
+    if (!customAmount.trim()) return '请输入自定义金额（最高 5000 元）';
+    if (!amountCents) return '金额格式不正确（最多 2 位小数，且 ≤ 5000）';
+    return null;
+  }, [tierMode, customAmount]);
+
+
+
   const [genLoading, setGenLoading] = useState(false);
   const [genResult, setGenResult] = useState<null | { code: string; payload: any }>(null);
+  const [showGenerateConfirm, setShowGenerateConfirm] = useState(false);
+
 
   const [queryInput, setQueryInput] = useState('');
   const [queryLoading, setQueryLoading] = useState(false);
@@ -103,7 +162,7 @@ export function AdminLicensePage() {
     toast.success('口令已清除');
   };
 
-  const handleGenerate = async () => {
+  const openGenerateConfirm = () => {
     if (!passcodeReady) {
       toast.error('请先输入口令');
       return;
@@ -115,9 +174,37 @@ export function AdminLicensePage() {
       return;
     }
 
+    if (!selectedTier) {
+      toast.error('请先输入有效金额');
+      return;
+    }
+
+    setShowGenerateConfirm(true);
+  };
+
+  const handleGenerate = async () => {
+    setShowGenerateConfirm(false);
+
+    if (!passcodeReady) {
+      toast.error('请先输入口令');
+      return;
+    }
+
+    const id = orderId.trim();
+    if (!id) {
+      toast.error('请输入订单号');
+      return;
+    }
+
+    if (!selectedTier) {
+      toast.error('请先完善自定义档位');
+      return;
+    }
+
     if (genLoading) return;
     setGenLoading(true);
     setGenResult(null);
+
 
     try {
       const resp = await fetch('/api/license/admin/generate', {
@@ -129,9 +216,11 @@ export function AdminLicensePage() {
         body: JSON.stringify({
           id,
           amountCents: selectedTier.amountCents,
+          points: selectedTier.points,
           expiresHours: effectiveExpiresHours,
           note: note.trim() || undefined,
         }),
+
       });
 
       const data = (await resp.json().catch(() => null)) as any;
@@ -252,19 +341,53 @@ export function AdminLicensePage() {
             <div className="space-y-2">
               <div className="text-sm font-medium text-gray-700">购买档位</div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {TIERS.map((t) => (
+                {PRESET_TIERS.map((t) => (
                   <Button
                     key={t.amountCents}
-                    variant={selectedTier.amountCents === t.amountCents ? 'default' : 'outline'}
-                    onClick={() => setSelectedTier(t)}
+                    variant={tierMode === 'preset' && selectedPresetCents === t.amountCents ? 'default' : 'outline'}
+                    onClick={() => {
+                      setTierMode('preset');
+                      setSelectedPresetCents(t.amountCents);
+                    }}
                     className="justify-center"
                   >
                     {t.label}
                   </Button>
                 ))}
+
+                <Button
+                  key="custom"
+                  variant={tierMode === 'custom' ? 'default' : 'outline'}
+                  onClick={() => setTierMode('custom')}
+                  className="justify-center"
+                >
+                  自定义
+                </Button>
               </div>
-              <div className="text-xs text-gray-600">当前：{selectedTier.label} = {selectedTier.points} 积分</div>
+
+              {tierMode === 'custom' ? (
+                <div className="mt-3 space-y-2">
+                  <div className="space-y-1">
+                    <div className="text-xs text-gray-600">自定义金额（元，≤5000）</div>
+                    <Input
+                      value={customAmount}
+                      onChange={(e) => setCustomAmount(e.target.value.slice(0, 16))}
+                      placeholder="例如：88.8"
+                    />
+                    <div className="text-xs text-gray-500">
+                      自动计算：{selectedTier ? `${selectedTier.points} 积分` : '-'}（按 1 元 = {CUSTOM_POINTS_PER_YUAN} 积分）
+                    </div>
+                  </div>
+                  {customTierError ? <div className="text-xs text-red-500">{customTierError}</div> : null}
+                </div>
+              ) : null}
+
+
+              <div className="text-xs text-gray-600">
+                当前：{selectedTier ? `${selectedTier.label} = ${selectedTier.points} 积分` : '请完善自定义档位'}
+              </div>
             </div>
+
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-2">
@@ -278,10 +401,44 @@ export function AdminLicensePage() {
               </div>
             </div>
 
-            <Button onClick={handleGenerate} disabled={!passcodeReady || !orderId.trim() || genLoading} className="w-full">
+            <Button onClick={openGenerateConfirm} disabled={!passcodeReady || !orderId.trim() || genLoading || !selectedTier} className="w-full">
               <KeyRound className="size-4 mr-2" />
               {genLoading ? '生成中…' : '生成并复制激活码'}
             </Button>
+
+            <AlertDialog open={showGenerateConfirm} onOpenChange={setShowGenerateConfirm}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>确认生成激活码？</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {selectedTier ? (
+                      <div className="space-y-2">
+                        <div className="text-sm">
+                          本次充值 <span className="font-semibold">{formatYuanFromCents(selectedTier.amountCents)} 元</span>，获得{' '}
+                          <span className="font-semibold">{selectedTier.points} 积分</span>。
+                        </div>
+                        <div className="text-sm font-medium text-red-600">
+                          提醒：本次充值 {formatYuanFromCents(selectedTier.amountCents)} 元 = {selectedTier.points} 积分
+                        </div>
+                        <div className="text-sm font-medium text-blue-600">
+                          提醒：本次充值 {formatYuanFromCents(selectedTier.amountCents)} 元 = {selectedTier.points} 积分
+                        </div>
+                        <div className="text-sm font-medium text-yellow-600">
+                          提醒：本次充值 {formatYuanFromCents(selectedTier.amountCents)} 元 = {selectedTier.points} 积分
+                        </div>
+                      </div>
+                    ) : (
+                      '请先选择档位'
+                    )}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>取消</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleGenerate}>确认并生成</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+
 
 
             {genResult ? (
