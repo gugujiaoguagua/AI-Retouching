@@ -2,8 +2,14 @@ import nacl from 'tweetnacl';
 import type { GenerationResult } from '@/app/types';
 
 const DEVICE_ID_KEY = 'ai-generator-device-id';
-const ACTIVATION_STATE_KEY = 'ai-generator-activation-state';
-const ACTIVATION_CODE_PREFIX = 'AIG1';
+
+// v1：旧版本地校验（绑定 deviceId）
+const ACTIVATION_STATE_KEY_V1 = 'ai-generator-activation-state';
+const ACTIVATION_CODE_PREFIX_V1 = 'AIG1';
+
+// v2：新版联网核销（绑定账号ID）
+const ACTIVATION_STATE_KEY_V2 = 'ai-generator-activation-state-v2';
+const ACTIVATION_CODE_PREFIX_V2 = 'AIG2';
 
 // 可公开：用于校验激活码签名（私钥请勿写入仓库）
 const DEFAULT_LICENSE_PUBLIC_KEY_B64 = 'GBof7kPD0uTUqW163R7I5mqKT36rPOYRVbKfSCaUVrc';
@@ -28,6 +34,12 @@ type ActivationStateV1 = {
   version: 1;
   redeemed: Record<string, { payload: ActivationPayloadV1; redeemedAt: number }>;
 };
+
+type ActivationStateV2 = {
+  version: 2;
+  redeemed: Record<string, { accountId: string; points: number; redeemedAt: number }>;
+};
+
 
 function getOrCreateDeviceId(): string {
   try {
@@ -82,9 +94,9 @@ function getActivationPublicKey(): Uint8Array | null {
   }
 }
 
-function getActivationState(): ActivationStateV1 {
+function getActivationStateV1(): ActivationStateV1 {
   try {
-    const raw = localStorage.getItem(ACTIVATION_STATE_KEY);
+    const raw = localStorage.getItem(ACTIVATION_STATE_KEY_V1);
     if (!raw) return { version: 1, redeemed: {} };
     const parsed = JSON.parse(raw) as any;
     if (parsed && parsed.version === 1 && parsed.redeemed && typeof parsed.redeemed === 'object') {
@@ -96,24 +108,47 @@ function getActivationState(): ActivationStateV1 {
   }
 }
 
-function setActivationState(next: ActivationStateV1): void {
+function setActivationStateV1(next: ActivationStateV1): void {
   try {
-    localStorage.setItem(ACTIVATION_STATE_KEY, JSON.stringify(next));
+    localStorage.setItem(ACTIVATION_STATE_KEY_V1, JSON.stringify(next));
   } catch {
     // ignore
   }
 }
 
-type RedeemResult =
+function getActivationStateV2(): ActivationStateV2 {
+  try {
+    const raw = localStorage.getItem(ACTIVATION_STATE_KEY_V2);
+    if (!raw) return { version: 2, redeemed: {} };
+    const parsed = JSON.parse(raw) as any;
+    if (parsed && parsed.version === 2 && parsed.redeemed && typeof parsed.redeemed === 'object') {
+      return parsed as ActivationStateV2;
+    }
+    return { version: 2, redeemed: {} };
+  } catch {
+    return { version: 2, redeemed: {} };
+  }
+}
+
+function setActivationStateV2(next: ActivationStateV2): void {
+  try {
+    localStorage.setItem(ACTIVATION_STATE_KEY_V2, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+
+type RedeemResultV1 =
   | { ok: true; payload: ActivationPayloadV1; redeemedAt: number }
   | { ok: false; message: string };
 
-function redeemActivationCode(rawCode: string, deviceId: string): RedeemResult {
-  const code = rawCode.trim();
+function redeemActivationCodeV1Local(rawCode: string, deviceId: string): RedeemResultV1 {
+  // 兼容复制粘贴带空格/换行/不可见字符的情况
+  const code = rawCode.replace(/\s+/g, '').trim();
   if (!code) return { ok: false, message: '请输入激活码' };
 
   const parts = code.split('.');
-  if (parts.length !== 3 || parts[0] !== ACTIVATION_CODE_PREFIX) {
+  if (parts.length !== 3 || parts[0] !== ACTIVATION_CODE_PREFIX_V1) {
     return { ok: false, message: '激活码格式不正确' };
   }
 
@@ -144,7 +179,7 @@ function redeemActivationCode(rawCode: string, deviceId: string): RedeemResult {
   if (payload.deviceId !== deviceId) return { ok: false, message: '激活码不匹配当前设备' };
   if (payload.expiresAt && Date.now() > payload.expiresAt) return { ok: false, message: '激活码已过期' };
 
-  const state = getActivationState();
+  const state = getActivationStateV1();
   if (state.redeemed[payload.id]) return { ok: false, message: '该激活码已兑换过' };
 
   const redeemedAt = Date.now();
@@ -155,10 +190,59 @@ function redeemActivationCode(rawCode: string, deviceId: string): RedeemResult {
       [payload.id]: { payload, redeemedAt },
     },
   };
-  setActivationState(next);
+  setActivationStateV1(next);
 
   return { ok: true, payload, redeemedAt };
 }
+
+type RedeemResultV2Online =
+  | { ok: true; id: string; points: number; redeemedAt: number; alreadyRedeemed: boolean }
+  | { ok: false; message: string };
+
+async function redeemActivationCodeV2Online(rawCode: string, accountId: string): Promise<RedeemResultV2Online> {
+  const code = rawCode.replace(/\s+/g, '').trim();
+  if (!code) return { ok: false, message: '请输入激活码' };
+
+  const resp = await fetch('/api/license/redeem', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code, accountId }),
+  });
+
+  if (resp.status === 404 || resp.status === 405) {
+    return { ok: false, message: '当前环境未连接兑换服务，请使用已部署环境' };
+  }
+
+  const data = (await resp.json().catch(() => null)) as any;
+
+  if (!resp.ok || !data || typeof data !== 'object') {
+    const msg = typeof data?.message === 'string' ? data.message : '兑换失败，请重试';
+    return { ok: false, message: msg };
+  }
+
+  if (!data.ok) {
+    const msg = typeof data?.message === 'string' ? data.message : '兑换失败，请重试';
+    return { ok: false, message: msg };
+  }
+
+  const id = typeof data.id === 'string' ? data.id : '';
+  const points = Number(data.points);
+  const redeemedAt = Number(data.redeemedAt);
+  const alreadyRedeemed = Boolean(data.alreadyRedeemed);
+
+  if (!id || !Number.isFinite(points) || points <= 0) {
+    return { ok: false, message: '兑换失败（返回数据不完整）' };
+  }
+
+  return {
+    ok: true,
+    id,
+    points: Math.floor(points),
+    redeemedAt: Number.isFinite(redeemedAt) && redeemedAt > 0 ? Math.floor(redeemedAt) : Date.now(),
+    alreadyRedeemed,
+  };
+}
+
 
 type AuthProvider = 'wechat' | 'phone';
 type AuthState = {
@@ -266,24 +350,76 @@ export const storageService = {
   },
 
   getActivationState(): ActivationStateV1 {
-    return getActivationState();
+    return getActivationStateV1();
   },
 
-  redeemActivationCode(code: string): { ok: boolean; message: string; addedPoints?: number } {
-    const res = redeemActivationCode(code, this.getDeviceId());
-    if (!res.ok) return res;
+  async redeemActivationCode(code: string): Promise<{ ok: boolean; message: string; addedPoints?: number }> {
+    // 兼容复制粘贴带空格/换行/不可见字符的情况
+    const normalized = code.replace(/\s+/g, '').trim();
+    if (!normalized) return { ok: false, message: '请输入激活码' };
 
-    const points = res.payload.points;
-    if (points > 0) {
-      this.addPoints(points, `激活码兑换 +${points}（${res.payload.id}）`);
+    const prefix = normalized.split('.')[0] ?? '';
+
+    // v1：旧版本地校验
+    if (prefix === ACTIVATION_CODE_PREFIX_V1) {
+      const res = redeemActivationCodeV1Local(normalized, this.getDeviceId());
+      if (!res.ok) return res;
+
+      const points = res.payload.points;
+      if (points > 0) {
+        this.addPoints(points, `激活码兑换 +${points}（${res.payload.id}）`);
+      }
+
+      return {
+        ok: true,
+        message: points > 0 ? `兑换成功 +${points} 积分` : '兑换成功',
+        addedPoints: points,
+      };
     }
 
-    return {
-      ok: true,
-      message: points > 0 ? `兑换成功 +${points} 积分` : '兑换成功',
-      addedPoints: points,
-    };
+    // v2：联网核销 + 绑定账号ID（这里的账号ID默认=本机生成的 device:*）
+    if (prefix === ACTIVATION_CODE_PREFIX_V2) {
+      const accountId = this.getCurrentAccountId();
+      const online = await redeemActivationCodeV2Online(normalized, accountId);
+      if (!online.ok) return online;
+
+
+      const state = getActivationStateV2();
+
+      // 已入账（本机）
+      if (state.redeemed[online.id]) {
+        return { ok: true, message: '该激活码已兑换（本机已入账）' };
+      }
+
+      // 已核销但本机未记录：为了防止重复加分，这里不再补入账
+      if (online.alreadyRedeemed) {
+        return { ok: false, message: '该激活码已被该账号兑换过（可能已在其他设备或已清理数据）' };
+      }
+
+      const points = online.points;
+      if (points > 0) {
+        this.addPoints(points, `激活码兑换 +${points}（${online.id}）`);
+      }
+
+      const next: ActivationStateV2 = {
+        version: 2,
+        redeemed: {
+          ...state.redeemed,
+          [online.id]: { accountId, points, redeemedAt: online.redeemedAt },
+        },
+      };
+      setActivationStateV2(next);
+
+      return {
+        ok: true,
+        message: points > 0 ? `兑换成功 +${points} 积分` : '兑换成功',
+        addedPoints: points,
+      };
+    }
+
+    return { ok: false, message: '激活码格式不正确' };
   },
+
 
   getAuthState(): AuthState | null {
     try {
@@ -344,9 +480,11 @@ export const storageService = {
   },
 
   getCurrentAccountId(): string {
-    // 方案A：积分与权益默认绑定到设备，不随登录态切换
+    // 当前没有真实“登录体系”时：直接使用本机生成的账号ID（无需用户提供）
     return getDefaultAccountId();
   },
+
+
 
   getPointsStore(): PointsStoreV2 {
     try {

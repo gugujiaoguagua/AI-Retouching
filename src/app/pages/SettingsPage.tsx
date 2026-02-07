@@ -21,6 +21,7 @@ import { Button } from '@/app/components/ui/button';
 import { Card } from '@/app/components/ui/card';
 import { Separator } from '@/app/components/ui/separator';
 import { Input } from '@/app/components/ui/input';
+import { Alert, AlertDescription } from '@/app/components/ui/alert';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -51,8 +52,13 @@ export function SettingsPage() {
   const [pointsBalance, setPointsBalance] = useState(() => storageService.getPointsBalance());
   const [pointsTransactions, setPointsTransactions] = useState(() => storageService.getPointsTransactions());
 
-  const deviceId = storageService.getDeviceId();
+  const accountId = storageService.getCurrentAccountId();
+
   const [activationCode, setActivationCode] = useState('');
+  const [redeemFeedback, setRedeemFeedback] = useState<null | { ok: boolean; message: string }>(null);
+  const [redeemLoading, setRedeemLoading] = useState(false);
+
+
 
   const [showCatBurst, setShowCatBurst] = useState(false);
   const [catBurstKey, setCatBurstKey] = useState(0);
@@ -87,20 +93,29 @@ export function SettingsPage() {
     }
   };
 
-  const handleCopyDeviceId = async () => {
-    await copyText(deviceId, '设备ID已复制');
+  const handleCopyAccountId = async () => {
+    await copyText(accountId, '账号ID已复制');
   };
 
-  const handleRedeemActivationCode = () => {
-    const res = storageService.redeemActivationCode(activationCode);
-    if (res.ok) {
-      refreshPoints();
-      setActivationCode('');
-      toast.success(res.message);
-    } else {
-      toast.error(res.message);
+
+  const handleRedeemActivationCode = async () => {
+    if (redeemLoading) return;
+    setRedeemLoading(true);
+    try {
+      const res = await storageService.redeemActivationCode(activationCode);
+      setRedeemFeedback({ ok: res.ok, message: res.message });
+      if (res.ok) {
+        refreshPoints();
+        setActivationCode('');
+        toast.success(res.message);
+      } else {
+        toast.error(res.message);
+      }
+    } finally {
+      setRedeemLoading(false);
     }
   };
+
 
   const refreshPoints = () => {
     const state = storageService.getPointsState();
@@ -151,8 +166,9 @@ export function SettingsPage() {
   ] as const;
 
   const buildPurchaseMessage = (pkg: { priceText: string; points: number }) => {
-    return `购买档位：${pkg.priceText} 元 = ${pkg.points} 积分\n设备ID：${deviceId}`;
+    return `购买档位：${pkg.priceText} 元 = ${pkg.points} 积分`;
   };
+
 
   const handleCopyPurchaseMessage = async (pkg: { priceText: string; points: number }) => {
     await copyText(buildPurchaseMessage(pkg), '购买信息已复制');
@@ -190,41 +206,54 @@ export function SettingsPage() {
         <section>
           <h2 className="text-sm font-medium text-gray-700 mb-3">激活码</h2>
           <Card className="p-4 space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
                 <p className="font-medium flex items-center gap-2">
                   <KeyRound className="size-4 text-gray-600" />
-                  本机设备ID
+                  账号ID（自动生成）
                 </p>
                 <p className="text-xs text-gray-600 mt-0.5">
-                  购买后把设备ID发给客服出码（绑定本机，不需要登录）
+                  当前版本不需要登录；兑换时系统会自动用本机账号ID核销，积分也会绑定到该ID。
                 </p>
               </div>
-              <Button variant="outline" size="sm" onClick={handleCopyDeviceId}>
-                <Copy className="size-4 mr-2" />
-                复制
-              </Button>
+              <div className="shrink-0 flex gap-2">
+                <Button variant="outline" size="sm" onClick={handleCopyAccountId}>
+                  <Copy className="size-4 mr-2" />
+                  复制
+                </Button>
+              </div>
             </div>
 
+
             <div className="text-xs font-mono break-all rounded-md border bg-gray-50 p-2 text-gray-700">
-              {deviceId}
+              {accountId}
             </div>
 
             <div className="space-y-2">
+
               <div className="text-sm font-medium text-gray-700">输入激活码</div>
               <div className="flex gap-3">
                 <Input
                   value={activationCode}
-                  onChange={(e) => setActivationCode(e.target.value.slice(0, 256))}
-                  placeholder="例如：AIG1.xxxxx.yyyyy"
+                  onChange={(e) => {
+                    setRedeemFeedback(null);
+                    setActivationCode(e.target.value.slice(0, 2048));
+                  }}
+                  placeholder="例如：AIG2.xxxxx.yyyyy"
                 />
-                <Button onClick={handleRedeemActivationCode} disabled={!activationCode.trim()}>
-                  兑换
+                <Button onClick={handleRedeemActivationCode} disabled={!activationCode.trim() || redeemLoading}>
+                  {redeemLoading ? '兑换中…' : '兑换'}
                 </Button>
               </div>
+              {redeemFeedback && (
+                <Alert variant={redeemFeedback.ok ? 'default' : 'destructive'}>
+                  <AlertDescription>{redeemFeedback.message}</AlertDescription>
+                </Alert>
+              )}
               <div className="text-xs text-gray-500">
-                兑换成功后会直接增加积分到本机。
+                兑换需要联网；成功后积分会绑定到当前账号。
               </div>
+
             </div>
           </Card>
         </section>
@@ -591,16 +620,10 @@ export function SettingsPage() {
           </DialogHeader>
 
           <div className="space-y-4 text-sm">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-xs text-gray-600 min-w-0">
-                <div className="font-medium">设备ID（绑定本机）</div>
-                <div className="font-mono break-all text-gray-700 mt-1">{deviceId}</div>
-              </div>
-              <Button variant="outline" size="sm" onClick={handleCopyDeviceId}>
-                <Copy className="size-4 mr-2" />
-                复制设备ID
-              </Button>
+            <div className="text-xs text-gray-600">
+              下单付款后客服会发放激活码，你回到上方“激活码”直接兑换即可（无需提供设备ID）。
             </div>
+
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {POINTS_PACKAGES.map((pkg) => (
